@@ -174,6 +174,7 @@ struct BrokerCommandDecodeTests {
         #expect(payload.searchTopK == 5)
         #expect(payload.identity == .project(workingSessionID: nil))
         #expect(payload.scope == .project)
+        #expect(payload.sessionID == nil)
         #expect(payload.mode == nil)
     }
 
@@ -209,7 +210,8 @@ struct BrokerCommandDecodeTests {
         }
         #expect(sessionPayload.identity == .session(workingSessionID: sessionID))
         #expect(sessionPayload.scope == .session)
-        #expect(sessionPayload.filters.sessionId == sessionID)
+        #expect(sessionPayload.sessionID == sessionID)
+        #expect(sessionPayload.filters.sessionId == sessionPayload.identity.sessionID)
 
         let project = try BrokerCommand.decode(
             command: "recall",
@@ -224,6 +226,8 @@ struct BrokerCommandDecodeTests {
         }
         #expect(projectPayload.identity == .project(workingSessionID: sessionID))
         #expect(projectPayload.scope == .project)
+        #expect(projectPayload.sessionID == sessionID)
+        #expect(projectPayload.filters.sessionId == projectPayload.identity.sessionID)
 
         let global = try BrokerCommand.decode(
             command: "recall",
@@ -238,6 +242,23 @@ struct BrokerCommandDecodeTests {
         }
         #expect(globalPayload.identity == .global(workingSessionID: nil))
         #expect(globalPayload.scope == .global)
+        #expect(globalPayload.sessionID == nil)
+
+        let globalWithSession = try BrokerCommand.decode(
+            command: "recall",
+            arguments: [
+                "query": .string("q"),
+                "scope": .string("global"),
+                "session_id": .string(sessionID.uuidString),
+            ]
+        )
+        guard case .recall(let globalWithSessionPayload) = globalWithSession else {
+            Issue.record("expected recall")
+            return
+        }
+        #expect(globalWithSessionPayload.identity == .global(workingSessionID: sessionID))
+        #expect(globalWithSessionPayload.sessionID == sessionID)
+        #expect(globalWithSessionPayload.filters.sessionId == globalWithSessionPayload.identity.sessionID)
     }
 
     @Test
