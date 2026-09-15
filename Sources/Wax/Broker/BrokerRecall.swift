@@ -1,22 +1,24 @@
 import Foundation
 
-/// Broker-owned recall pipeline: fetch + merge + pack behind one seam.
+/// Broker-owned recall and MCP search pipeline: fetch + merge + pack.
 ///
-/// One entry point spans session snapshot → multi-horizon fetch → merge →
-/// scope select → wire-ready pack. `RecallPresent` stays a separate module for
-/// wire rendering; impression side effects stay with the broker.
+/// Recall: session snapshot → multi-horizon fetch → merge → scope select → pack.
+/// Search: the same snapshot and identity fence, with today's search rank law
+/// (not `LayeredRecall.search`'s +0.25 / topK 6/8). `RecallPresent` stays a
+/// separate module for wire rendering; impression side effects stay with the
+/// broker.
 ///
 /// Interface invariants (caller-enforced, documented here):
 /// - Caller guarantees remember drain. The module takes no lock; call the
-///   recall entry under `commandMutex` after teardown serialization, exactly
-///   as `handle` routes non-drain commands today. Concurrent `remember` during
-///   recall degrades to stale reads, never corruption.
+///   recall/search entry under `commandMutex` after teardown serialization,
+///   exactly as `handle` routes non-drain commands today. Concurrent `remember`
+///   during retrieval degrades to stale reads, never corruption.
 /// - Caller runs the embedder wait first. The module never waits on readiness;
 ///   an unready embedder degrades inside the orchestrator lanes and surfaces
 ///   via the effective-mode diagnostics in the pack.
 package enum BrokerRecall {
-    /// Live handles. The module snapshots sessions once per recall behind the
-    /// seam; callers never build `LayeredRecall.Stores` for this path.
+    /// Live handles. The module snapshots sessions once per retrieval behind
+    /// the seam; callers never build `LayeredRecall.Stores` for this path.
     package struct Environment: Sendable {
         package var longTermMemory: MemoryOrchestrator
         package var sessions: VirtualSessionStore
@@ -63,6 +65,33 @@ package enum BrokerRecall {
         }
     }
 
+    /// Packed MCP search. `payload` is wire-ready; `sessionHits` exist so the
+    /// caller can record retrieval hits (a broker side effect).
+    package struct PackedSearch: Sendable {
+        package var payload: AgentBrokerValue
+        package var hits: [MemoryOrchestrator.MemorySearchHit]
+        package var sessionHits: [MemoryOrchestrator.MemorySearchHit]
+        package var requestedMode: SearchMode
+        package var effectiveMode: SearchMode
+        package var queryEmbeddingState: RAGContext.QueryEmbeddingState
+
+        package init(
+            payload: AgentBrokerValue,
+            hits: [MemoryOrchestrator.MemorySearchHit],
+            sessionHits: [MemoryOrchestrator.MemorySearchHit],
+            requestedMode: SearchMode,
+            effectiveMode: SearchMode,
+            queryEmbeddingState: RAGContext.QueryEmbeddingState
+        ) {
+            self.payload = payload
+            self.hits = hits
+            self.sessionHits = sessionHits
+            self.requestedMode = requestedMode
+            self.effectiveMode = effectiveMode
+            self.queryEmbeddingState = queryEmbeddingState
+        }
+    }
+
     /// The recall path. Single snapshot, fetch, merge, pack.
     package static func recall(
         _ command: BrokerCommand.Recall,
@@ -96,9 +125,98 @@ package enum BrokerRecall {
         return pack(command: command, result: result, nowMs: environment.nowMs())
     }
 
-    /// Shared `Stores` construction behind the seam. The broker's remaining
-    /// layered-search path builds through the same function so the snapshot
-    /// discipline cannot drift between callers.
+    /// MCP search fetch + merge + pack. Rank law is score desc, working before
+    /// durable on ties, then frameId desc — not `LayeredRecall.search`.
+    package static func search(
+        _ command: BrokerCommand.Search,
+        in environment: Environment
+    ) async throws -> PackedSearch {
+        let stores = makeStores(
+            snapshot: environment.sessions.live,
+            longTermMemory: environment.longTermMemory,
+            endedSessions: environment.endedSessions,
+            preview: environment.preview,
+            canonicalFrameID: environment.canonicalFrameID,
+            nowMs: environment.nowMs
+        )
+        let query = command.query
+        let mode = command.mode
+        let topK = command.topK
+        let parsedFilters = command.filters
+
+        let sessionExecution: MemoryOrchestrator.SearchExecution
+        let sessionHits: [MemoryOrchestrator.MemorySearchHit]
+        if let sessionID = parsedFilters.sessionId,
+           let working = stores.workingLane(sessionID)?.memory {
+            sessionExecution = try await working.searchExecution(
+                query: query,
+                mode: mode,
+                topK: topK,
+                frameFilter: parsedFilters.frameFilter,
+                timeRange: parsedFilters.timeRange
+            )
+            sessionHits = sessionExecution.hits
+        } else if parsedFilters.sessionId != nil {
+            sessionExecution = MemoryOrchestrator.SearchExecution(
+                hits: [],
+                requestedMode: mode,
+                effectiveMode: mode,
+                queryEmbeddingState: .notRequested
+            )
+            sessionHits = []
+        } else {
+            sessionExecution = try await stores.longTermMemory.searchExecution(
+                query: query,
+                mode: mode,
+                topK: topK,
+                frameFilter: parsedFilters.frameFilter,
+                timeRange: parsedFilters.timeRange
+            )
+            sessionHits = []
+        }
+
+        let execution: MemoryOrchestrator.SearchExecution
+        if parsedFilters.sessionId == nil {
+            execution = sessionExecution
+        } else {
+            let identity = stores.inferWriteScope(parsedFilters.sessionId, nil)
+            let durableFilter = LayeredRecall.frameFilterForScopedRetrieval(
+                base: parsedFilters.frameFilter,
+                scope: .project,
+                identity: identity
+            )
+            var durableExecution = try await stores.longTermMemory.searchExecution(
+                query: query,
+                mode: mode,
+                topK: topK,
+                frameFilter: durableFilter,
+                timeRange: parsedFilters.timeRange
+            )
+            // `frameFilterForScopedRetrieval` no-ops on empty identity; still drop
+            // stamped foreign durable so session-scoped search matches recall.
+            durableExecution.hits = durableExecution.hits.filter {
+                AgentBrokerService.matchesSessionScopedRetrieval(
+                    metadata: $0.metadata,
+                    identity: identity,
+                    isWorking: false
+                )
+            }
+            execution = mergeSearchExecutions(
+                working: sessionExecution,
+                durable: durableExecution,
+                topK: topK
+            )
+        }
+        return packSearch(
+            command: command,
+            execution: execution,
+            sessionHits: sessionHits,
+            preview: environment.preview
+        )
+    }
+
+    /// Shared `Stores` construction behind the seam. Search and recall both
+    /// build through this function so the snapshot cannot drift.
     package static func makeStores(
         snapshot sessionsSnapshot: [UUID: VirtualSessionStore.SessionState],
         longTermMemory: MemoryOrchestrator,
@@ -223,6 +341,111 @@ package enum BrokerRecall {
             hits: result.hits,
             scope: result.scope,
             identity: result.identity
+        )
+    }
+
+    /// Session-scoped search merges the live working store with durable long-term.
+    /// Working hits win ties so a just-written session note is not buried.
+    /// Frame IDs are not comparable across stores; do not dedupe them.
+    package static func mergeSearchExecutions(
+        working: MemoryOrchestrator.SearchExecution,
+        durable: MemoryOrchestrator.SearchExecution,
+        topK: Int
+    ) -> MemoryOrchestrator.SearchExecution {
+        enum Lane: Equatable {
+            case working
+            case durable
+        }
+        var tagged: [(MemoryOrchestrator.MemorySearchHit, Lane)] = working.hits.map { ($0, .working) }
+        tagged.append(contentsOf: durable.hits.map { ($0, .durable) })
+        tagged.sort { lhs, rhs in
+            if lhs.0.score != rhs.0.score { return lhs.0.score > rhs.0.score }
+            if lhs.1 != rhs.1 { return lhs.1 == .working }
+            return lhs.0.frameId > rhs.0.frameId
+        }
+        let effectiveMode: SearchMode
+        switch (working.effectiveMode, durable.effectiveMode) {
+        case (.textOnly, _), (_, .textOnly):
+            effectiveMode = .textOnly
+        default:
+            effectiveMode = working.effectiveMode
+        }
+        return MemoryOrchestrator.SearchExecution(
+            hits: tagged.prefix(max(1, topK)).map(\.0),
+            requestedMode: working.requestedMode,
+            effectiveMode: effectiveMode,
+            queryEmbeddingState: worseQueryEmbeddingState(
+                working.queryEmbeddingState,
+                durable.queryEmbeddingState
+            )
+        )
+    }
+
+    private static func worseQueryEmbeddingState(
+        _ lhs: RAGContext.QueryEmbeddingState,
+        _ rhs: RAGContext.QueryEmbeddingState
+    ) -> RAGContext.QueryEmbeddingState {
+        func rank(_ state: RAGContext.QueryEmbeddingState) -> Int {
+            switch state {
+            case .available: return 0
+            case .notRequested: return 1
+            case .vectorDisabled: return 2
+            case .noEmbedder: return 3
+            case .failed: return 4
+            case .circuitOpen: return 5
+            case .timeout: return 6
+            }
+        }
+        return rank(lhs) >= rank(rhs) ? lhs : rhs
+    }
+
+    private static func packSearch(
+        command: BrokerCommand.Search,
+        execution: MemoryOrchestrator.SearchExecution,
+        sessionHits: [MemoryOrchestrator.MemorySearchHit],
+        preview: @Sendable (String?) -> String
+    ) -> PackedSearch {
+        let query = command.query
+        let topK = command.topK
+        let parsedFilters = command.filters
+        let rows: [AgentBrokerValue] = execution.hits.enumerated().map { index, hit in
+            .object([
+                "rank": .from(index + 1),
+                "frameId": .from(hit.frameId),
+                "score": .double(Double(hit.score)),
+                "sources": .array(hit.sources.map { .string($0.rawValue) }),
+                "preview": .string(preview(hit.previewText)),
+                "metadata": .object(hit.metadata.mapValues(AgentBrokerValue.string)),
+                "explanations": .array(hit.explanations.map(AgentBrokerValue.string)),
+            ])
+        }
+        let text = rows.isEmpty ? "No results." : rows.map(\.debugJSONString).joined(separator: "\n")
+        var payload: [String: AgentBrokerValue] = [
+            "query": .string(query),
+            "topK": .from(topK),
+            "requested_mode": .string(execution.requestedMode.diagnosticsSummary),
+            "effective_mode": .string(execution.effectiveMode.diagnosticsSummary),
+            "query_embedding_state": .string(execution.queryEmbeddingState.rawValue),
+            "applied_filters": parsedFilters.summary,
+            "time_range_requested": .from(parsedFilters.timeRange != nil),
+            "time_range_applied": .from(parsedFilters.timeRange != nil),
+            "results": .array(rows),
+            "display_text": .string(text),
+        ]
+        if let warning = AgentBrokerService.retrievalDowngradeWarning(
+            requestedMode: execution.requestedMode.diagnosticsSummary,
+            effectiveMode: execution.effectiveMode.diagnosticsSummary,
+            queryEmbeddingState: execution.queryEmbeddingState.rawValue
+        ) {
+            payload["warning"] = .string(warning)
+        }
+        return PackedSearch(
+            payload: .object(payload),
+            hits: execution.hits,
+            sessionHits: sessionHits,
+            requestedMode: execution.requestedMode,
+            effectiveMode: execution.effectiveMode,
+            queryEmbeddingState: execution.queryEmbeddingState
         )
     }
 }
