@@ -129,6 +129,57 @@ struct WaxMCPSingleSurfaceDocsTests {
         }
     }
 
+    @Test func codingSkillsDoNotAdvertiseThemselvesForEveryMCPSession() throws {
+        for path in skillDocs {
+            let text = try read(path)
+            #expect(
+                !text.contains("Use when Wax MCP tools are available"),
+                "\(path) must not match every session that already has MCP tools"
+            )
+            let forbidsSessionStart = text.contains("Do not use at session start")
+                || text.contains("Do not invoke this skill at session start")
+            #expect(forbidsSessionStart, "\(path) must say not to load at session start")
+        }
+
+        let wax = try read("Resources/skills/public/wax/SKILL.md")
+        #expect(
+            wax.contains("Use only when writing or changing Swift app code that imports Wax"),
+            "Swift wax skill must only match Swift client work"
+        )
+        #expect(
+            wax.contains("Do not use at session start"),
+            "Swift wax skill must say not to load at session start"
+        )
+        #expect(
+            !wax.contains("Use when Wax MCP tools are available"),
+            "Swift wax skill must not match every session that already has MCP tools"
+        )
+        #expect(
+            !wax.contains("follow the live server instructions (`session_open`"),
+            "Swift wax skill must not teach session_open as the MCP default"
+        )
+
+        let openai = try read("Resources/skills/public/wax-mcp/agents/openai.yaml")
+        #expect(!openai.contains("Use Wax MCP tools for durable agent memory"))
+        #expect(openai.contains("not for session start") || openai.contains("Do not load"))
+
+        let waxOpenAI = try read("Resources/skills/public/wax/agents/openai.yaml")
+        #expect(
+            waxOpenAI.contains("Do not load at session start"),
+            "Swift wax openai.yaml must say not to load at session start"
+        )
+
+        let readme = try read("README.md")
+        #expect(
+            !readme.contains("The **wax-mcp** skill is the operator playbook"),
+            "README must not call wax-mcp the daily playbook"
+        )
+        #expect(
+            readme.contains("install/doctor only"),
+            "README must describe wax-mcp as install/doctor only"
+        )
+    }
+
     private func read(_ relativePath: String) throws -> String {
         try String(
             contentsOf: repoRoot.appendingPathComponent(relativePath),

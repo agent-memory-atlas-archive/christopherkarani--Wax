@@ -96,7 +96,7 @@ Keep HTTP up with `~/.local/share/waxmcp/bin/start-wax-mcp-http.sh` or LaunchAge
 
 Full snippets, LaunchAgent `ai.wax.mcp-http`, `vector-health`, Hermes doctors, and a smoke test: [Resources/docs/wax-mcp-hosts.md](Resources/docs/wax-mcp-hosts.md).
 
-The **wax-mcp** skill is the operator playbook. The **wax** skill is Swift framework integration. Different audience.
+The **wax-mcp** skill is install/doctor only. The **wax** skill is Swift SDK integration. Daily memory follows MCP server instructions, not either skill.
 
 </details>
 
@@ -121,6 +121,8 @@ Learn. Write the moment it would change the next agent's behavior — including 
 Skip only empty chit-chat. Store one or two sentences. Do not store chats, test logs, plan drafts, or secrets.
 
 Daily tools are `remember`, `recall`, and `stats`. The server auto-opens one transport-scoped session on the first `remember` or `recall`. Do not invent a `session_id`. This is transport-owned working memory, not per-chat isolation, unless the host proves a conversation identity. Pass `cwd` when the host does not advertise roots.
+
+Do not load the `wax` or `wax-mcp` skills at session start. MCP server instructions are the playbook. `wax` is Swift SDK only; `wax-mcp` is install/doctor only.
 
 `recall` is self-contained. Do not recall again on follow-ups unless the job changed. Omit `mode` unless you need an override. Person prefs are in `person`. Empty project recall is a miss, not "I have no memory." Pass `scope=global` only for intentional cross-project retrieval.
 
