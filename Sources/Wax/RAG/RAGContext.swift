@@ -62,24 +62,81 @@ public struct RAGContext: Sendable, Equatable {
     /// ``requestedMode`` and ``effectiveMode`` (and check ``queryEmbeddingState``)
     /// to detect that degradation instead of assuming it from scores.
     ///
-    /// For logs, MCP, or docs that need the historical string form (`"text"`,
-    /// `"vector"`, `"hybrid(alpha=0.500)"`), use ``SearchMode/diagnosticsSummary``.
+    /// Hybrid or vector **effective** retrieval always implies ``QueryEmbeddingState/available``.
+    /// The public memberwise triple init is unavailable; `Memory.search` produces
+    /// this value. For logs, MCP, or docs that need the historical string form
+    /// (`"text"`, `"vector"`, `"hybrid(alpha=0.500)"`), use ``SearchMode/diagnosticsSummary``.
     public struct Diagnostics: Sendable, Equatable {
-        /// The retrieval mode requested by the caller.
-        public var requestedMode: SearchMode
-        /// The retrieval mode actually executed (e.g. ``SearchMode/textOnly`` when the vector lane was unavailable).
-        public var effectiveMode: SearchMode
-        /// What happened to the query embedding for this search.
-        public var queryEmbeddingState: QueryEmbeddingState
+        private enum Kind: Sendable, Equatable {
+            /// Text lane ran. Requested may be text or a degraded hybrid/vector search.
+            case text(requested: SearchMode, embedding: QueryEmbeddingState)
+            /// Vector lane ran. Embedding is always ``QueryEmbeddingState/available``.
+            case vector(requested: SearchMode, effective: SearchMode)
+        }
 
+        private let kind: Kind
+
+        /// The retrieval mode requested by the caller.
+        public var requestedMode: SearchMode {
+            switch kind {
+            case .text(let requested, _), .vector(let requested, _):
+                return requested
+            }
+        }
+
+        /// The retrieval mode actually executed (e.g. ``SearchMode/textOnly`` when the vector lane was unavailable).
+        public var effectiveMode: SearchMode {
+            switch kind {
+            case .text:
+                return .textOnly
+            case .vector(_, let effective):
+                return effective
+            }
+        }
+
+        /// What happened to the query embedding for this search.
+        public var queryEmbeddingState: QueryEmbeddingState {
+            switch kind {
+            case .text(_, let embedding):
+                return embedding
+            case .vector:
+                return .available
+            }
+        }
+
+        /// Text lane ran. ``effectiveMode`` is always ``SearchMode/textOnly``.
+        package static func text(
+            requested requestedMode: SearchMode,
+            embedding queryEmbeddingState: QueryEmbeddingState
+        ) -> Diagnostics {
+            Diagnostics(kind: .text(requested: requestedMode, embedding: queryEmbeddingState))
+        }
+
+        /// Vector lane ran. ``queryEmbeddingState`` is always ``QueryEmbeddingState/available``.
+        /// Passing ``SearchMode/textOnly`` as `effective` degrades to ``text(requested:embedding:)``.
+        package static func vector(
+            requested requestedMode: SearchMode,
+            effective effectiveMode: SearchMode
+        ) -> Diagnostics {
+            switch effectiveMode {
+            case .textOnly:
+                return text(requested: requestedMode, embedding: .available)
+            case .vectorOnly, .hybrid:
+                return Diagnostics(kind: .vector(requested: requestedMode, effective: effectiveMode))
+            }
+        }
+
+        @available(*, unavailable, message: "Diagnostics is produced by Memory.search; hybrid/vector effective requires an embedding")
         public init(
             requestedMode: SearchMode,
             effectiveMode: SearchMode,
             queryEmbeddingState: QueryEmbeddingState
         ) {
-            self.requestedMode = requestedMode
-            self.effectiveMode = effectiveMode
-            self.queryEmbeddingState = queryEmbeddingState
+            fatalError("RAGContext.Diagnostics memberwise init is unavailable")
+        }
+
+        private init(kind: Kind) {
+            self.kind = kind
         }
     }
 

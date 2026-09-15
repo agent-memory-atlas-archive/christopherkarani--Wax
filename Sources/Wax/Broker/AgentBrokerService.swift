@@ -717,11 +717,7 @@ extension AgentBrokerService {
             "results": .array(rows),
             "display_text": .string(text),
         ]
-        if let warning = Self.retrievalDowngradeWarning(
-            requestedMode: execution.requestedMode.diagnosticsSummary,
-            effectiveMode: execution.effectiveMode.diagnosticsSummary,
-            queryEmbeddingState: execution.queryEmbeddingState.rawValue
-        ) {
+        if let warning = Self.retrievalDowngradeWarning(execution.diagnostics) {
             payload["warning"] = .string(warning)
         }
         return .object(payload)
@@ -1239,54 +1235,70 @@ extension AgentBrokerService {
             if lhs.1 != rhs.1 { return lhs.1 == .working }
             return lhs.0.frameId > rhs.0.frameId
         }
-        let effectiveMode: SearchMode
+        let diagnostics: RAGContext.Diagnostics
         switch (working.effectiveMode, durable.effectiveMode) {
         case (.textOnly, _), (_, .textOnly):
-            effectiveMode = .textOnly
+            diagnostics = .text(
+                requested: working.requestedMode,
+                embedding: worseQueryEmbeddingState(
+                    working.queryEmbeddingState,
+                    durable.queryEmbeddingState
+                )
+            )
         default:
-            effectiveMode = working.effectiveMode
+            diagnostics = .vector(
+                requested: working.requestedMode,
+                effective: working.effectiveMode
+            )
         }
         return MemoryOrchestrator.SearchExecution(
             hits: tagged.prefix(max(1, topK)).map(\.0),
-            requestedMode: working.requestedMode,
-            effectiveMode: effectiveMode,
-            queryEmbeddingState: worseQueryEmbeddingState(
-                working.queryEmbeddingState,
-                durable.queryEmbeddingState
-            )
+            diagnostics: diagnostics
         )
     }
 
     /// Compact JSON warning when hybrid was requested but some or all stores used text.
     package static func retrievalDowngradeWarning(
-        requestedMode: String,
-        effectiveMode: String,
-        queryEmbeddingState: String
+        _ diagnostics: RAGContext.Diagnostics
     ) -> String? {
-        let requestedHybrid = requestedMode.hasPrefix("hybrid")
-        guard requestedHybrid else { return nil }
-        let mixed = effectiveMode == "mixed" || queryEmbeddingState == "mixed"
-        if mixed {
+        retrievalDowngradeWarning(.uniform(diagnostics))
+    }
+
+    /// Compact JSON warning for layered recall, including mixed/unavailable lanes.
+    package static func retrievalDowngradeWarning(
+        _ diagnostics: LayeredRecall.LaneDiagnostics
+    ) -> String? {
+        switch diagnostics {
+        case .unavailable:
+            return nil
+        case .mixed(let requested):
+            guard isHybrid(requested) else { return nil }
             return "WARNING: hybrid requested, some memory stores used text"
+        case .uniform(let diagnostics):
+            guard isHybrid(diagnostics.requestedMode) else { return nil }
+            guard diagnostics.effectiveMode == .textOnly else { return nil }
+            let reason: String
+            switch diagnostics.queryEmbeddingState {
+            case .timeout:
+                reason = "embedder timeout"
+            case .circuitOpen:
+                reason = "embedder circuit open"
+            case .failed:
+                reason = "embedder failed"
+            case .vectorDisabled:
+                reason = "vector search disabled"
+            case .available:
+                reason = "vector search timed out"
+            case .noEmbedder, .notRequested:
+                reason = "embedder missing"
+            }
+            return "WARNING: hybrid requested, \(reason), used text"
         }
-        let usedText = effectiveMode == "text" || effectiveMode.hasPrefix("text")
-        guard usedText else { return nil }
-        let reason: String
-        switch RAGContext.QueryEmbeddingState(rawValue: queryEmbeddingState) {
-        case .timeout:
-            reason = "embedder timeout"
-        case .circuitOpen:
-            reason = "embedder circuit open"
-        case .failed:
-            reason = "embedder failed"
-        case .vectorDisabled:
-            reason = "vector search disabled"
-        case .available:
-            reason = "vector search timed out"
-        case .noEmbedder, .notRequested, .none:
-            reason = "embedder missing"
-        }
-        return "WARNING: hybrid requested, \(reason), used text"
+    }
+
+    private static func isHybrid(_ mode: SearchMode) -> Bool {
+        if case .hybrid = mode { return true }
+        return false
     }
 
     private static func worseQueryEmbeddingState(

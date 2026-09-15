@@ -167,13 +167,7 @@ public actor Memory {
             timeRange: mappedTimeRange,
             topK: options.topK
         )
-        var results = execution.context
-        results.diagnostics = RAGContext.Diagnostics(
-            requestedMode: execution.requestedMode,
-            effectiveMode: execution.effectiveMode,
-            queryEmbeddingState: execution.queryEmbeddingState
-        )
-        return results
+        return execution.context
     }
 
     /// Search with inline option customization.

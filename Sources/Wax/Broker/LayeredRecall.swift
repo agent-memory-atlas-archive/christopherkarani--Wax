@@ -200,6 +200,48 @@ package enum LayeredRecall {
         package static let empty = ScopeDropped()
     }
 
+    /// Broker-only retrieval outcome across working/durable lanes.
+    /// `"mixed"` / `"n/a"` are wire strings here — they are not
+    /// ``RAGContext/QueryEmbeddingState`` cases.
+    package enum LaneDiagnostics: Sendable, Equatable {
+        case unavailable
+        case uniform(RAGContext.Diagnostics)
+        case mixed(requested: SearchMode)
+
+        package var wireRequestedMode: String {
+            switch self {
+            case .unavailable:
+                return "n/a"
+            case .uniform(let diagnostics):
+                return diagnostics.requestedMode.diagnosticsSummary
+            case .mixed(let requested):
+                return requested.diagnosticsSummary
+            }
+        }
+
+        package var wireEffectiveMode: String {
+            switch self {
+            case .unavailable:
+                return "n/a"
+            case .uniform(let diagnostics):
+                return diagnostics.effectiveMode.diagnosticsSummary
+            case .mixed:
+                return "mixed"
+            }
+        }
+
+        package var wireQueryEmbeddingState: String {
+            switch self {
+            case .unavailable:
+                return "n/a"
+            case .uniform(let diagnostics):
+                return diagnostics.queryEmbeddingState.rawValue
+            case .mixed:
+                return "mixed"
+            }
+        }
+    }
+
     package struct RecallResult: Sendable {
         package var hits: [Hit]
         package var scope: Scope
@@ -207,13 +249,15 @@ package enum LayeredRecall {
         package var projectMiss: Bool
         package var scopeMissMessage: String?
         package var scopeDropped: ScopeDropped = .empty
-        package var requestedModeSummary: String
-        package var effectiveModeSummary: String
-        package var queryEmbeddingState: String
+        package var diagnostics: LaneDiagnostics
         package var searchTopK: Int
         package var retrievalTopK: Int
         package var limit: Int
         package var collapsed: Int = 0
+
+        package var requestedModeSummary: String { diagnostics.wireRequestedMode }
+        package var effectiveModeSummary: String { diagnostics.wireEffectiveMode }
+        package var queryEmbeddingState: String { diagnostics.wireQueryEmbeddingState }
     }
 
     package struct EpisodicLaneHit: Sendable {
@@ -1283,7 +1327,6 @@ package enum LayeredRecall {
             scopeMissMessage = nil
         }
         let keptHits = Array(selected.hits.prefix(request.limit))
-        let primary = lanes.workingExecution ?? lanes.durableExecution
         let laneDiagnostics = combinedLaneDiagnostics(
             working: lanes.workingExecution,
             durable: lanes.durableExecution
@@ -1296,9 +1339,7 @@ package enum LayeredRecall {
             projectMiss: projectMiss,
             scopeMissMessage: scopeMissMessage,
             scopeDropped: selected.scopeDropped,
-            requestedModeSummary: primary?.requestedMode.diagnosticsSummary ?? "n/a",
-            effectiveModeSummary: laneDiagnostics.mode,
-            queryEmbeddingState: laneDiagnostics.state,
+            diagnostics: laneDiagnostics,
             searchTopK: request.searchTopK,
             retrievalTopK: fetchRequest.searchTopK,
             limit: request.limit,
@@ -1309,23 +1350,20 @@ package enum LayeredRecall {
     private static func combinedLaneDiagnostics(
         working: MemoryOrchestrator.RecallExecution?,
         durable: MemoryOrchestrator.RecallExecution?
-    ) -> (mode: String, state: String) {
+    ) -> LaneDiagnostics {
         switch (working, durable) {
         case let (working?, durable?):
-            let mode = working.effectiveMode.diagnosticsSummary
-            let otherMode = durable.effectiveMode.diagnosticsSummary
-            let state = working.queryEmbeddingState.rawValue
-            let otherState = durable.queryEmbeddingState.rawValue
-            return (
-                mode == otherMode ? mode : "mixed",
-                state == otherState ? state : "mixed"
-            )
+            if working.effectiveMode == durable.effectiveMode,
+               working.queryEmbeddingState == durable.queryEmbeddingState {
+                return .uniform(working.diagnostics)
+            }
+            return .mixed(requested: working.requestedMode)
         case let (working?, nil):
-            return (working.effectiveMode.diagnosticsSummary, working.queryEmbeddingState.rawValue)
+            return .uniform(working.diagnostics)
         case let (nil, durable?):
-            return (durable.effectiveMode.diagnosticsSummary, durable.queryEmbeddingState.rawValue)
+            return .uniform(durable.diagnostics)
         case (nil, nil):
-            return ("n/a", "n/a")
+            return .unavailable
         }
     }
 

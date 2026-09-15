@@ -98,6 +98,32 @@ func unifiedSearchDocsDoNotConstructPackageOnlySearchRequestAsPublicAPI() throws
 }
 
 @Test
+func publicAPIDocumentsClosedRAGContextDiagnostics() throws {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    let source = try String(
+        contentsOf: repoRoot.appendingPathComponent("Sources/Wax/RAG/RAGContext.swift"),
+        encoding: .utf8
+    )
+    #expect(source.contains("private enum Kind"))
+    #expect(source.contains("@available(*, unavailable"))
+    #expect(source.contains("hybrid/vector effective requires an embedding"))
+    #expect(!source.contains("self.requestedMode = requestedMode"))
+
+    let publicAPI = try String(
+        contentsOf: repoRoot.appendingPathComponent("Resources/skills/public/wax/references/public-api.md"),
+        encoding: .utf8
+    )
+    #expect(publicAPI.contains("closed retrieval record"))
+    #expect(publicAPI.contains("no public memberwise init"))
+    #expect(publicAPI.contains("hybrid/vector **effective** retrieval always implies"))
+    #expect(publicAPI.contains("Diagnostics(requestedMode:effectiveMode:queryEmbeddingState:)` is unavailable"))
+}
+
+@Test
 func publicAPIAndSkillNamePhotoVideoFacades() throws {
     let repoRoot = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent()

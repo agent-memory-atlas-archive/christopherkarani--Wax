@@ -322,21 +322,37 @@ package struct FastRAGContextBuilder: Sendable {
             tokenizer: tokenizer,
             nowMs: nowMs
         )
-        let embeddingState: RAGContext.QueryEmbeddingState
-        if let embedding, !embedding.isEmpty {
-            embeddingState = .available
-        } else {
-            embeddingState = .notRequested
-        }
-        context.diagnostics = RAGContext.Diagnostics(
-            requestedMode: clamped.searchMode,
-            effectiveMode: response.vectorSearchTimedOut ? .textOnly : clamped.searchMode,
-            queryEmbeddingState: embeddingState
+        context.diagnostics = Self.diagnostics(
+            requested: clamped.searchMode,
+            embedding: embedding,
+            vectorSearchTimedOut: response.vectorSearchTimedOut
         )
         return context
     }
 
     // MARK: - Helpers
+
+    /// Hybrid/vector without a query embedding ran as text. Do not report
+    /// vector/hybrid effective with ``QueryEmbeddingState/notRequested``.
+    package static func diagnostics(
+        requested: SearchMode,
+        embedding: [Float]?,
+        vectorSearchTimedOut: Bool
+    ) -> RAGContext.Diagnostics {
+        let embeddingAvailable = embedding.map { !$0.isEmpty } ?? false
+        if vectorSearchTimedOut || !embeddingAvailable {
+            return .text(
+                requested: requested,
+                embedding: embeddingAvailable ? .available : .notRequested
+            )
+        }
+        switch requested {
+        case .textOnly:
+            return .text(requested: .textOnly, embedding: .available)
+        case .vectorOnly, .hybrid:
+            return .vector(requested: requested, effective: requested)
+        }
+    }
 
     private func clamp(_ config: FastRAGConfig) -> FastRAGConfig {
         var c = config

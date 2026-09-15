@@ -129,51 +129,37 @@ func vectorOnlyWithoutEmbedderStillThrows() async throws {
 func retrievalDowngradeWarningMapsEmbeddingStates() {
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "text",
-            queryEmbeddingState: "timeout"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .timeout)
         ) == "WARNING: hybrid requested, embedder timeout, used text"
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "text",
-            queryEmbeddingState: "circuit_open"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .circuitOpen)
         ) == "WARNING: hybrid requested, embedder circuit open, used text"
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "text",
-            queryEmbeddingState: "failed"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .failed)
         ) == "WARNING: hybrid requested, embedder failed, used text"
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "text",
-            queryEmbeddingState: "vector_disabled"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .vectorDisabled)
         ) == "WARNING: hybrid requested, vector search disabled, used text"
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "text",
-            queryEmbeddingState: "no_embedder"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .noEmbedder)
         ) == "WARNING: hybrid requested, embedder missing, used text"
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "text",
-            effectiveMode: "text",
-            queryEmbeddingState: "no_embedder"
+            RAGContext.Diagnostics.text(requested: .textOnly, embedding: .noEmbedder)
         ) == nil
     )
     #expect(
         AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)",
-            effectiveMode: "hybrid(alpha=0.500)",
-            queryEmbeddingState: "available"
+            RAGContext.Diagnostics.vector(requested: .hybrid(), effective: .hybrid())
         ) == nil
     )
 }

@@ -73,6 +73,31 @@ struct VectorLaneDiagnosticsTests {
         }
     }
 
+    @Test(arguments: [[Float](), nil])
+    func contextBuilderReportsTextEffectiveWhenHybridHasNoEmbedding(embedding: [Float]?) async throws {
+        try await TempFiles.withTempFile { url in
+            let wax = try await Wax.create(at: url)
+            do {
+                let context = try await FastRAGContextBuilder().build(
+                    query: "memory reliability",
+                    embedding: embedding,
+                    wax: wax,
+                    config: FastRAGConfig(
+                        searchMode: .hybrid(alpha: 0.5),
+                        deterministicNowMs: 1_700_000_000_000
+                    )
+                )
+                #expect(context.diagnostics?.requestedMode == .hybrid(alpha: 0.5))
+                #expect(context.diagnostics?.effectiveMode == .textOnly)
+                #expect(context.diagnostics?.queryEmbeddingState == .notRequested)
+                try await wax.close()
+            } catch {
+                try? await wax.close()
+                throw error
+            }
+        }
+    }
+
     @Test(arguments: [true, false])
     func distinguishesVectorTimeoutFromSuccessfulEmptyLane(hang: Bool) async throws {
         try await TempFiles.withTempFile { url in

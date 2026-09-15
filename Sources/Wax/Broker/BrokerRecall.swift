@@ -202,11 +202,7 @@ package enum BrokerRecall {
             "summary": .string(RecallPresent.summary(for: result.hits)),
             "display_text": .string(lines.joined(separator: "\n")),
         ]
-        if let warning = AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: result.requestedModeSummary,
-            effectiveMode: result.effectiveModeSummary,
-            queryEmbeddingState: result.queryEmbeddingState
-        ) {
+        if let warning = AgentBrokerService.retrievalDowngradeWarning(result.diagnostics) {
             payload["warning"] = .string(warning)
         }
         if !verbose {

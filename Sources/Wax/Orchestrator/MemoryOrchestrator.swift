@@ -73,39 +73,35 @@ package actor MemoryOrchestrator {
 
     package struct SearchExecution: Sendable, Equatable {
         package var hits: [MemorySearchHit]
-        package var requestedMode: SearchMode
-        package var effectiveMode: SearchMode
-        package var queryEmbeddingState: RAGContext.QueryEmbeddingState
+        package var diagnostics: RAGContext.Diagnostics
 
-        package init(
-            hits: [MemorySearchHit],
-            requestedMode: SearchMode,
-            effectiveMode: SearchMode,
-            queryEmbeddingState: RAGContext.QueryEmbeddingState
-        ) {
+        package var requestedMode: SearchMode { diagnostics.requestedMode }
+        package var effectiveMode: SearchMode { diagnostics.effectiveMode }
+        package var queryEmbeddingState: RAGContext.QueryEmbeddingState {
+            diagnostics.queryEmbeddingState
+        }
+
+        package init(hits: [MemorySearchHit], diagnostics: RAGContext.Diagnostics) {
             self.hits = hits
-            self.requestedMode = requestedMode
-            self.effectiveMode = effectiveMode
-            self.queryEmbeddingState = queryEmbeddingState
+            self.diagnostics = diagnostics
         }
     }
 
     package struct RecallExecution: Sendable, Equatable {
         package var context: RAGContext
-        package var requestedMode: SearchMode
-        package var effectiveMode: SearchMode
-        package var queryEmbeddingState: RAGContext.QueryEmbeddingState
+        package var diagnostics: RAGContext.Diagnostics
 
-        package init(
-            context: RAGContext,
-            requestedMode: SearchMode,
-            effectiveMode: SearchMode,
-            queryEmbeddingState: RAGContext.QueryEmbeddingState
-        ) {
+        package var requestedMode: SearchMode { diagnostics.requestedMode }
+        package var effectiveMode: SearchMode { diagnostics.effectiveMode }
+        package var queryEmbeddingState: RAGContext.QueryEmbeddingState {
+            diagnostics.queryEmbeddingState
+        }
+
+        package init(context: RAGContext, diagnostics: RAGContext.Diagnostics) {
+            var context = context
+            context.diagnostics = diagnostics
             self.context = context
-            self.requestedMode = requestedMode
-            self.effectiveMode = effectiveMode
-            self.queryEmbeddingState = queryEmbeddingState
+            self.diagnostics = diagnostics
         }
     }
 
@@ -1219,17 +1215,13 @@ package actor MemoryOrchestrator {
         guard !trimmed.isEmpty else {
             return SearchExecution(
                 hits: [],
-                requestedMode: mode,
-                effectiveMode: .textOnly,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: mode, embedding: .notRequested)
             )
         }
         guard topK > 0 else {
             return SearchExecution(
                 hits: [],
-                requestedMode: mode,
-                effectiveMode: .textOnly,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: mode, embedding: .notRequested)
             )
         }
 
@@ -1311,9 +1303,11 @@ package actor MemoryOrchestrator {
         }
         return SearchExecution(
             hits: hits,
-            requestedMode: mode,
-            effectiveMode: response.vectorSearchTimedOut ? .textOnly : searchMode,
-            queryEmbeddingState: queryEmbedding.state
+            diagnostics: Self.retrievalDiagnostics(
+                requested: mode,
+                effective: response.vectorSearchTimedOut ? .textOnly : searchMode,
+                embedding: queryEmbedding.state
+            )
         )
     }
 
@@ -1874,9 +1868,7 @@ package actor MemoryOrchestrator {
         guard !trimmedQuery.isEmpty else {
             return RecallExecution(
                 context: RAGContext(query: query, items: [], totalTokens: 0),
-                requestedMode: resolvedRequestedMode,
-                effectiveMode: resolvedRequestedMode,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: resolvedRequestedMode, embedding: .notRequested)
             )
         }
 
@@ -1906,15 +1898,33 @@ package actor MemoryOrchestrator {
 
         return RecallExecution(
             context: context,
-            requestedMode: resolvedRequestedMode,
-            effectiveMode: context.diagnostics?.effectiveMode ?? effectiveSearchMode,
-            queryEmbeddingState: queryEmbedding.state
+            diagnostics: Self.retrievalDiagnostics(
+                requested: resolvedRequestedMode,
+                effective: context.diagnostics?.effectiveMode ?? effectiveSearchMode,
+                embedding: queryEmbedding.state
+            )
         )
     }
 
     private struct QueryEmbeddingResult {
         let embedding: [Float]?
         let state: RAGContext.QueryEmbeddingState
+    }
+
+    private static func retrievalDiagnostics(
+        requested: SearchMode,
+        effective: SearchMode,
+        embedding: RAGContext.QueryEmbeddingState
+    ) -> RAGContext.Diagnostics {
+        switch effective {
+        case .textOnly:
+            return .text(requested: requested, embedding: embedding)
+        case .vectorOnly, .hybrid:
+            if embedding == .available {
+                return .vector(requested: requested, effective: effective)
+            }
+            return .text(requested: requested, embedding: embedding)
+        }
     }
 
     private static func queryEmbeddingPolicy(for mode: SearchMode) -> QueryEmbeddingPolicy {

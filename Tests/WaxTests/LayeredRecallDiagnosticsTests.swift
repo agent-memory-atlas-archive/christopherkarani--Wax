@@ -74,8 +74,10 @@ struct LayeredRecallDiagnosticsTests {
             ), stores: stores)
             #expect(result.hits.contains { $0.text.contains("working investigation") })
             #expect(result.hits.contains { $0.text.contains("durable decision") })
+            #expect(result.diagnostics == .mixed(requested: .hybrid()))
             #expect(result.effectiveModeSummary == "mixed")
             #expect(result.queryEmbeddingState == "mixed")
+            #expect(RAGContext.QueryEmbeddingState(rawValue: result.queryEmbeddingState) == nil)
         }
     }
 
@@ -87,6 +89,9 @@ struct LayeredRecallDiagnosticsTests {
             ), stores: stores)
             #expect(result.effectiveModeSummary == "hybrid(alpha=0.500)")
             #expect(result.queryEmbeddingState == "available")
+            #expect(result.diagnostics == .uniform(
+                .vector(requested: .hybrid(), effective: .hybrid())
+            ))
         }
     }
 }
