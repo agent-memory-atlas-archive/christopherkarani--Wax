@@ -195,11 +195,7 @@ package enum BrokerRecall {
             // `frameFilterForScopedRetrieval` no-ops on empty identity; still drop
             // stamped foreign durable so session-scoped search matches recall.
             durableExecution.hits = durableExecution.hits.filter {
-                AgentBrokerService.matchesSessionScopedRetrieval(
-                    metadata: $0.metadata,
-                    identity: identity,
-                    isWorking: false
-                )
+                allowsDurableSearchHit(metadata: $0.metadata, identity: identity)
             }
             execution = mergeSearchExecutions(
                 working: sessionExecution,
@@ -342,6 +338,24 @@ package enum BrokerRecall {
             scope: result.scope,
             identity: result.identity
         )
+    }
+
+    /// Unresolved identity keeps unstamped durable and drops stamped foreign.
+    /// Resolved identity is exact `wax.project` / `wax.repo`.
+    package static func allowsDurableSearchHit(
+        metadata: [String: String],
+        identity: LayeredRecall.Identity
+    ) -> Bool {
+        if identity.project == nil && identity.repo == nil {
+            return !hasExplicitProjectOrRepoStamp(metadata)
+        }
+        return LayeredRecall.metadataMatchesScopedRetrieval(metadata, identity: identity)
+    }
+
+    package static func hasExplicitProjectOrRepoStamp(_ metadata: [String: String]) -> Bool {
+        let project = metadata[MemoryMetadataKeys.project]
+        let repo = metadata[MemoryMetadataKeys.repo]
+        return (project.map { !$0.isEmpty } ?? false) || (repo.map { !$0.isEmpty } ?? false)
     }
 
     /// Session-scoped search merges the live working store with durable long-term.

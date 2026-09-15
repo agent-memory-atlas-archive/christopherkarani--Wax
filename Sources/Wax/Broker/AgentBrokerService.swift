@@ -2693,16 +2693,7 @@ extension AgentBrokerService {
         isWorking: Bool
     ) -> Bool {
         if isWorking { return true }
-        if identity.project == nil && identity.repo == nil {
-            return !hasExplicitProjectOrRepoStamp(metadata)
-        }
-        return LayeredRecall.metadataMatchesScopedRetrieval(metadata, identity: identity)
-    }
-
-    static func hasExplicitProjectOrRepoStamp(_ metadata: [String: String]) -> Bool {
-        let project = metadata[MemoryMetadataKeys.project]
-        let repo = metadata[MemoryMetadataKeys.repo]
-        return (project.map { !$0.isEmpty } ?? false) || (repo.map { !$0.isEmpty } ?? false)
+        return BrokerRecall.allowsDurableSearchHit(metadata: metadata, identity: identity)
     }
 
     static func filterCorpusHits(
