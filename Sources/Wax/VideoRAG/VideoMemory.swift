@@ -50,13 +50,16 @@ public actor VideoMemory {
     #if canImport(Photos)
     /// Sync videos from the Photos library into the store.
     ///
-    /// Requires Photos authorization.
+    /// Requires Photos authorization. `VideoScope.assetIDs` takes ``VideoID``;
+    /// wrap `PHAsset.localIdentifier` as `VideoID(source: .photos, id:)`.
     public func syncLibrary(scope: VideoScope) async throws {
         try await orchestrator.syncLibrary(scope: scope)
     }
     #endif
 
     /// Ingest local video files.
+    ///
+    /// `VideoFile.id` is ``VideoID``. `VideoFile(id: String, url:)` wraps `source: .file`.
     public func ingest(files: [VideoFile]) async throws {
         try await orchestrator.ingest(files: files)
     }

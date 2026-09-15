@@ -18,20 +18,35 @@ public struct VideoID: Sendable, Hashable, Equatable {
 
 /// Scope for syncing videos from the Photos library.
 public enum VideoScope: Sendable, Equatable {
+    /// Sync all videos in the library.
     case fullLibrary
-    case assetIDs([String])
+    /// Sync only the specified video identifiers.
+    case assetIDs([VideoID])
 }
 
-/// Input item for file-based video ingestion.
+/// A local video file to ingest into ``VideoMemory``.
 public struct VideoFile: Sendable, Equatable {
-    public var id: String
+    /// Stable caller-provided identity stored as `video.source_id` + `video.source`.
+    public var id: VideoID
+    /// Local file URL for the video bytes.
     public var url: URL
+    /// Optional capture date when no media metadata timestamp is available.
     public var captureDate: Date?
 
-    public init(id: String, url: URL, captureDate: Date? = nil) {
-        self.id = id
+    public init(id: VideoID, url: URL, captureDate: Date? = nil) {
+        let trimmed = id.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        // File ingest always records source `.file`.
+        self.id = VideoID(
+            source: .file,
+            id: trimmed.isEmpty ? url.standardizedFileURL.absoluteString : trimmed
+        )
         self.url = url
         self.captureDate = captureDate
+    }
+
+    /// File-ingest convenience. Wraps `id` as ``VideoID`` with `source: .file`.
+    public init(id: String, url: URL, captureDate: Date? = nil) {
+        self.init(id: VideoID(source: .file, id: id), url: url, captureDate: captureDate)
     }
 }
 

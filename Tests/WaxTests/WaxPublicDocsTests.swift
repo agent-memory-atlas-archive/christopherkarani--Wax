@@ -120,6 +120,22 @@ func publicAPIAndSkillNamePhotoVideoFacades() throws {
     }
 }
 
+@Test
+func waxPublicDocsDocumentVideoFileIDAsVideoID() throws {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    let publicAPI = try String(
+        contentsOf: repoRoot.appendingPathComponent("Resources/skills/public/wax/references/public-api.md"),
+        encoding: .utf8
+    )
+    #expect(publicAPI.contains("`VideoFile.id` is `VideoID`"))
+    #expect(publicAPI.contains("`VideoFile(id: String, url:)`"))
+    #expect(publicAPI.contains("`VideoScope.assetIDs` is `[VideoID]`"))
+}
+
 private let waxSessionDocPaths = [
     "Sources/Wax/Wax.docc/Articles/SessionManagement.md",
     "Resources/website/docs/orchestrator/session-management.md",

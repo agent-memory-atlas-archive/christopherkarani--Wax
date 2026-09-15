@@ -36,6 +36,58 @@ private struct TestTranscriptProvider: VideoTranscriptProvider {
 }
 
 @Test
+func videoRAGFileStringInitSetsSourceFile() {
+    let url = URL(fileURLWithPath: "/tmp/standup.mp4")
+    let file = VideoFile(id: "standup", url: url)
+    #expect(file.id.source == .file)
+    #expect(file.id.id == "standup")
+    #expect(file.id == VideoID(source: .file, id: "standup"))
+
+    let typed = VideoFile(id: VideoID(source: .photos, id: "standup"), url: url)
+    #expect(typed.id.source == .file)
+    #expect(typed.id.id == "standup")
+
+    let empty = VideoFile(id: "   ", url: url)
+    #expect(empty.id.source == .file)
+    #expect(empty.id.id == url.standardizedFileURL.absoluteString)
+}
+
+@Test
+func videoRAGScopeAssetIDsRequiresVideoID() {
+    let photosID = VideoID(source: .photos, id: "local-identifier")
+    let scope = VideoScope.assetIDs([photosID])
+    guard case .assetIDs(let ids) = scope else {
+        Issue.record("expected VideoScope.assetIDs")
+        return
+    }
+    #expect(ids == [photosID])
+}
+
+@Test
+func videoRAGTypesAndOrchestratorTakeVideoIDNotRawString() throws {
+    let repoRoot = URL(fileURLWithPath: #filePath)
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+        .deletingLastPathComponent()
+
+    let types = try String(
+        contentsOf: repoRoot.appendingPathComponent("Sources/Wax/VideoRAG/VideoRAGTypes.swift"),
+        encoding: .utf8
+    )
+    #expect(types.contains("public var id: VideoID"))
+    #expect(types.contains("public init(id: VideoID, url: URL, captureDate: Date? = nil)"))
+    #expect(types.contains("public init(id: String, url: URL, captureDate: Date? = nil)"))
+    #expect(types.contains("case assetIDs([VideoID])"))
+    #expect(!types.contains("case assetIDs([String])"))
+
+    let orchestrator = try String(
+        contentsOf: repoRoot.appendingPathComponent("Sources/Wax/VideoRAG/VideoRAGOrchestrator.swift"),
+        encoding: .utf8
+    )
+    #expect(!orchestrator.contains("VideoID(source: .file, id: file.id)"))
+}
+
+@Test
 func videoRAGFileIngestWritesSearchableTranscriptAndRecallFindsIt() async throws {
     try await TempFiles.withTempFile { url in
         let mp4Url = FileManager.default.temporaryDirectory

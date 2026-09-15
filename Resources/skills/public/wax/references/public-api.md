@@ -112,6 +112,7 @@ Available when `canImport(ImageIO)`. These are the public facades. Do not constr
 - `public protocol MultimodalEmbeddingProvider` — shared image + text embedder for the photo/video facades
 - Supporting public types: `PhotoID`, `PhotoRAGConfig`, `PhotoFile`, `PhotoQuery`, `PhotoScope`, `PhotoRAGContext`, `VideoID`, `VideoRAGConfig`, `VideoFile`, `VideoQuery`, `VideoScope`, `VideoRAGContext`, `VideoTranscriptProvider`, `VisionOCRProvider`
 - `PhotoID` matches `VideoID` (`source` + `id`). Photo delete, filters, file ingest, and `PhotoRAGItem` use `PhotoID`. Wrap Photos `localIdentifier` as `PhotoID(source: .photos, id:)`. On-disk photo metadata stays strings.
+- `VideoFile.id` is `VideoID`. Canonical init takes `VideoID`; `VideoFile(id: String, url:)` wraps `source: .file` (trim; empty id falls back to the file URL). `VideoScope.assetIDs` is `[VideoID]`. Wrap Photos `localIdentifier` as `VideoID(source: .photos, id:)`. On-disk video metadata stays strings.
 
 ```swift
 let embedder = try await BuiltInMultimodalEmbeddings.make(.miniLM)
