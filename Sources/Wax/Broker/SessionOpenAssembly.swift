@@ -1,7 +1,7 @@
 import Foundation
 
 /// Session-open bootstrap assembly: bounded handoff projection and wire payload.
-/// Resume vs start-new stays in ``SessionOpenDecision``. Store I/O stays on the broker.
+/// Resume vs start-new stays in ``SessionOpenDecision``. Store I/O stays on ``SessionBootstrap``.
 package enum SessionOpenAssembly {
     package struct Tokenizer: Sendable {
         package var count: @Sendable (String) async -> Int
@@ -56,32 +56,25 @@ package enum SessionOpenAssembly {
 
     /// True only when compacting a found handoff that still has content or tasks.
     /// Empty `found=true` bodies hide without a tokenizer, matching the pre-peel early return.
-    package static func needsTokenizer(_ value: AgentBrokerValue) -> Bool {
-        guard let handoff = value.objectValue,
-              handoff["found"]?.boolValue == true
-        else {
-            return false
-        }
-        let content = handoff["content"]?.stringValue ?? ""
-        let tasks = handoff["pending_tasks"]?.arrayValue?.compactMap(\.stringValue) ?? []
-        return !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !tasks.isEmpty
+    package static func needsTokenizer(_ handoff: SessionHandoff) -> Bool {
+        guard handoff.found else { return false }
+        return !handoff.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !handoff.pendingTasks.isEmpty
     }
 
     package static func compactHandoff(
-        _ value: AgentBrokerValue,
+        _ handoff: SessionHandoff,
         recallQuery: String?,
         tokenizer: Tokenizer
     ) async -> AgentBrokerValue {
-        guard let handoff = value.objectValue,
-              handoff["found"]?.boolValue == true
-        else {
-            return value
+        guard handoff.found else {
+            return .object(["found": .bool(false)])
         }
 
-        let originalContent = handoff["content"]?.stringValue ?? ""
-        let originalTasks = handoff["pending_tasks"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        let originalContent = handoff.content
+        let originalTasks = handoff.pendingTasks
         let trimmedQuery = recallQuery?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let emptyBody = !needsTokenizer(value)
+        let emptyBody = !needsTokenizer(handoff)
         if emptyBody {
             return .object([
                 "found": .bool(false),
@@ -143,20 +136,21 @@ package enum SessionOpenAssembly {
     }
 
     package static func bootstrapPayload(
-        sessionID: String,
+        sessionID: UUID,
         rebound: Bool,
         handoff: AgentBrokerValue,
         recall: AgentBrokerValue?,
         person: AgentBrokerValue? = nil
     ) -> AgentBrokerValue {
+        let sessionIDString = sessionID.uuidString
         let sharePrompt =
-            "This MCP connection remembers session_id (\(sessionID)); "
+            "This MCP connection remembers session_id (\(sessionIDString)); "
             + "omit it on subsequent memory calls on this connection. "
             + "After reconnect, session_open with conversation_id — do not invent a UUID. "
             + "If remember committed is false, the write did not land; do not spawn children "
             + "(host children do not get Wax tools)."
         var payload: [String: AgentBrokerValue] = [
-            "session_id": .string(sessionID),
+            "session_id": .string(sessionIDString),
             "rebound": .bool(rebound),
             "share_prompt": .string(sharePrompt),
             "handoff": handoff,

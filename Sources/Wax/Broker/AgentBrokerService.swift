@@ -1535,7 +1535,6 @@ extension AgentBrokerService {
         let repo = command.repo
         let agentID = command.agentID
         let runID = command.runID
-        let recallQuery = command.recallQuery
         let cwd = command.cwd
         let conversationID = BrokerCommand.normalizedOrNil(command.conversationID)
         let requestedAgentID = BrokerCommand.normalizedOrNil(agentID)
@@ -1611,139 +1610,31 @@ extension AgentBrokerService {
             priorUnique: priorUnique.map { .init(sessionID: $0.sessionID, runID: $0.runID) },
             requestedRunID: requestedRunID
         )
-        let openAction = SessionOpenDecision.evaluate(openFacts)
-
-        let lifecycle: VirtualSessionStore.LifecycleResult
-        switch openAction {
-        case .resume(let resumeSessionID):
-            // Conversation match may also stamp a new run_id; hinted resume restores
-            // a connection session after broker restart without rewriting identity.
-            lifecycle = try await virtualSessions.resume(
-                explicitSessionID: resumeSessionID,
-                agentID: nil,
-                runID: nil,
-                reopenEnded: conversationMatch?.sessionID == resumeSessionID
-            )
-            if let conversationMatch,
-               conversationMatch.sessionID == resumeSessionID,
-               let requestedRunID,
-               conversationMatch.runID != requestedRunID
-            {
-                try virtualSessions.updateLive(resumeSessionID) { state in
-                    state.manifest.runID = requestedRunID
-                    state.manifest.updatedAtMs = Self.nowMs()
-                }
-            }
-        case .startNew:
-            // Conversation isolation mints a fresh UUID; otherwise start handles
-            // exact pair / unique agent+project rebind.
-            let explicitSessionID = conversationID == nil ? nil : UUID()
-            lifecycle = try await virtualSessions.start(
-                explicitSessionID: explicitSessionID,
-                agentID: agentID,
-                runID: runID,
-                inferredScope: inferredScope
-            )
-            if let conversationID {
-                try virtualSessions.updateLive(lifecycle.state.id) { state in
-                    state.manifest.conversationID = conversationID
-                }
-            }
-        }
-
-        let sessionUUID = lifecycle.state.id
-        let sessionID = sessionUUID.uuidString
-
-        // Explicit project must win over cwd inference for both project and repo.
-        // Leaving a cwd-inferred repo would advertise a split identity and stamp
-        // foreign wax.repo on later remembers.
-        let trimmedProject = project?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let trimmedRepo = repo?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        if !trimmedProject.isEmpty || conversationID != nil {
-            try virtualSessions.updateLive(sessionUUID) { state in
-                if !trimmedProject.isEmpty {
-                    state.manifest.project = trimmedProject
-                    state.manifest.repo = trimmedRepo.isEmpty ? trimmedProject : trimmedRepo
-                }
-                if let conversationID {
-                    state.manifest.conversationID = conversationID
-                }
-            }
-        }
-
-        let inferred = cwd.map { MemorySemantics.inferScopeContext(currentDirectoryPath: $0) } ?? MemoryScopeContext()
-        let resolvedProject: String?
-        let resolvedRepo: String?
-        if let live = activeSessions[sessionUUID] {
-            resolvedProject = live.manifest.project ?? BrokerCommand.normalizedOrNil(project) ?? inferred.projectName
-            resolvedRepo = live.manifest.repo ?? BrokerCommand.normalizedOrNil(repo) ?? inferred.repoName
-        } else {
-            resolvedProject = BrokerCommand.normalizedOrNil(project) ?? inferred.projectName
-            resolvedRepo = BrokerCommand.normalizedOrNil(repo) ?? inferred.repoName
-        }
-        let handoffPayload: AgentBrokerValue
-        if let resolvedProject {
-            handoffPayload = try await handoffLatest(.init(project: resolvedProject))
-        } else {
-            // A missing project is an unresolved scope, not permission to read
-            // the newest handoff across every project.
-            handoffPayload = .object(["found": .bool(false)])
-        }
-
-        var recallPayload: AgentBrokerValue?
-        if let recallQuery, !recallQuery.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            if await longTermMemory.isQueryEmbedderReady() {
-                await awaitQueryEmbedderIfNeeded(memory: try await memory(for: sessionUUID))
-            }
-            var recallArgs: [String: AgentBrokerValue] = [
-                "query": .string(recallQuery),
-                "scope": .string("project"),
-                "limit": .from(5),
-            ]
-            if let resolvedProject { recallArgs["project"] = .string(resolvedProject) }
-            if let resolvedRepo { recallArgs["repo"] = .string(resolvedRepo) }
-            recallArgs["session_id"] = .string(sessionID)
-            if let cwd { recallArgs["cwd"] = .string(cwd) }
-            recallPayload = try await recall(try BrokerCommand.Recall.decode(BrokerArguments(recallArgs)))
-        }
-
-        var personPayload: AgentBrokerValue?
-        do {
-            var personArgs: [String: AgentBrokerValue] = [
-                "query": .string("facts about this person standing corrections"),
-                "scope": .string("global"),
-                "limit": .from(3),
-                "mode": .string("text"),
-                "memory_types": .array([.string(MemoryType.userPreference.rawValue)]),
-                "session_id": .string(sessionID),
-            ]
-            if let resolvedProject { personArgs["project"] = .string(resolvedProject) }
-            if let resolvedRepo { personArgs["repo"] = .string(resolvedRepo) }
-            if let cwd { personArgs["cwd"] = .string(cwd) }
-            personPayload = try await recall(try BrokerCommand.Recall.decode(BrokerArguments(personArgs)))
-        } catch {
-            personPayload = nil
-        }
-
-        let rebound = SessionOpenDecision.rebound(returnedSessionID: sessionUUID, facts: openFacts)
-        let tokenizer: SessionOpenAssembly.Tokenizer
-        if SessionOpenAssembly.needsTokenizer(handoffPayload) {
-            let counter = try await TokenCounter.shared()
-            tokenizer = SessionOpenAssembly.Tokenizer(count: { text in await counter.count(text) })
-        } else {
-            tokenizer = .character
-        }
-        let handoff = await SessionOpenAssembly.compactHandoff(
-            handoffPayload,
-            recallQuery: recallQuery,
-            tokenizer: tokenizer
+        return try await SessionBootstrap.open(
+            command: command,
+            facts: openFacts,
+            inferredScope: inferredScope,
+            in: sessionBootstrapEnvironment()
         )
-        return SessionOpenAssembly.bootstrapPayload(
-            sessionID: sessionID,
-            rebound: rebound,
-            handoff: handoff,
-            recall: recallPayload,
-            person: personPayload
+    }
+
+    private func sessionBootstrapEnvironment() -> SessionBootstrap.Environment {
+        SessionBootstrap.Environment(
+            sessions: virtualSessions,
+            longTermMemory: longTermMemory,
+            nowMs: { Self.nowMs() },
+            recall: { command in try await self.recall(command) },
+            awaitQueryEmbedder: { sessionID in
+                if await self.longTermMemory.isQueryEmbedderReady() {
+                    await self.awaitQueryEmbedderIfNeeded(
+                        memory: try await self.memory(for: sessionID)
+                    )
+                }
+            },
+            makeTokenizer: {
+                let counter = try await TokenCounter.shared()
+                return SessionOpenAssembly.Tokenizer(count: { text in await counter.count(text) })
+            }
         )
     }
 
