@@ -159,7 +159,7 @@ public struct PhotoFile: Sendable, Equatable {
 
 /// Errors thrown during photo ingestion.
 public enum PhotoIngestError: Error, Sendable, Equatable {
-    case fileMissing(id: String, url: URL)
+    case fileMissing(id: PhotoID, url: URL)
     case invalidImage(reason: String)
     case embedderDimensionMismatch(expected: Int, got: Int)
 }

@@ -167,7 +167,7 @@ public struct VideoRAGContext: Sendable, Equatable {
 
 /// Errors thrown during video ingestion.
 public enum VideoIngestError: Error, Sendable, Equatable {
-    case fileMissing(id: String, url: URL)
+    case fileMissing(id: VideoID, url: URL)
     case unsupportedPlatform(reason: String)
     case invalidVideo(reason: String)
     case embedderDimensionMismatch(expected: Int, got: Int)

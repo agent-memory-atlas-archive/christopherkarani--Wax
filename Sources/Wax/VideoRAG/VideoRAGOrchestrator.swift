@@ -553,11 +553,10 @@ package actor VideoRAGOrchestrator {
         guard file.url.isFileURL else {
             throw VideoIngestError.invalidVideo(reason: "file URL must be a file:// URL")
         }
-        guard FileManager.default.fileExists(atPath: file.url.path(percentEncoded: false)) else {
-            throw VideoIngestError.fileMissing(id: file.id, url: file.url)
-        }
-
         let videoID = VideoID(source: .file, id: file.id)
+        guard FileManager.default.fileExists(atPath: file.url.path(percentEncoded: false)) else {
+            throw VideoIngestError.fileMissing(id: videoID, url: file.url)
+        }
         let previousRoot = index.rootByVideoID[videoID]
 
         let (durationMs, keyframeImages) = try await buildKeyframes(url: file.url)

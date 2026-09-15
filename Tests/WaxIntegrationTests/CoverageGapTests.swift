@@ -371,7 +371,7 @@ func videoRAGIngestMissingFileThrows() async throws {
                 Issue.record("Expected .fileMissing, got \(error)")
                 return
             }
-            #expect(id == "missing")
+            #expect(id == VideoID(source: .file, id: "missing"))
         }
     }
 }
