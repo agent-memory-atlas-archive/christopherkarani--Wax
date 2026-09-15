@@ -175,8 +175,7 @@ package enum BrokerCommand: Sendable, Equatable {
         package var kind: String?
         package var aliases: [String]
         package var predicate: String?
-        /// Raw wire object; handler parses to ``FactValue``.
-        package var object: AgentBrokerValue?
+        package var object: FactValue?
 
         package var sessionID: UUID? { destination.sessionID }
         package var writeSemantics: MemoryWriteSemantics { destination.writeSemantics }
@@ -258,7 +257,8 @@ package enum BrokerCommand: Sendable, Equatable {
         package var relation: VersionRelation
         package var validFromMs: Int64?
         package var validToMs: Int64?
-        package var evidence: AgentBrokerValue?
+        /// Parsed at decode; omitted evidence is empty.
+        package var evidence: [StructuredEvidence]
     }
 
     package struct CorpusSearch: Sendable, Equatable {
@@ -664,7 +664,7 @@ extension BrokerCommand.KnowledgeCapture {
             kind: try args.optionalString("kind"),
             aliases: try args.optionalStringArray("aliases") ?? [],
             predicate: try args.optionalString("predicate"),
-            object: try args.optionalValue("object")
+            object: try args.optionalValue("object").map { try BrokerCommand.parseFactValue($0) }
         )
     }
 }
@@ -803,7 +803,7 @@ extension BrokerCommand.FactAssert {
             relation: try args.optionalString("relation").map { try BrokerCommand.parseVersionRelation($0) } ?? .sets,
             validFromMs: try args.optionalInt64("valid_from"),
             validToMs: try args.optionalInt64("valid_to"),
-            evidence: try args.optionalValue("evidence")
+            evidence: try BrokerCommand.parseStructuredEvidence(try args.optionalValue("evidence"))
         )
     }
 }
