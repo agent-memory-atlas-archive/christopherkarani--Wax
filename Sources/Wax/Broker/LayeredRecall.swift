@@ -1,6 +1,62 @@
 import Foundation
 import WaxCore
 
+/// Closed layered-search identity after session resolution.
+///
+/// `.unscoped` must not contain `.working`. Empty `HorizonSet` is unrepresentable
+/// through ``make(sessionID:horizons:)``. Direct `.unscoped([.working])` can still
+/// be spelled; ``includesWorking`` stays false so search cannot nil-skip a UUID.
+package enum MemorySearchIdentity: Sendable, Equatable {
+    /// No resolved session. Horizons must be non-empty and must not contain `.working`.
+    case unscoped(HorizonSet)
+    /// Resolved session. Horizons must be non-empty; `.working` is legal.
+    case session(sessionID: UUID, horizons: HorizonSet)
+
+    package var sessionID: UUID? {
+        switch self {
+        case .unscoped:
+            return nil
+        case .session(let sessionID, _):
+            return sessionID
+        }
+    }
+
+    package var horizons: HorizonSet {
+        switch self {
+        case .unscoped(let horizons), .session(_, let horizons):
+            return horizons
+        }
+    }
+
+    /// True only on ``session`` when horizons contain `.working`.
+    package var includesWorking: Bool {
+        switch self {
+        case .unscoped:
+            return false
+        case .session(_, let horizons):
+            return horizons.contains(.working)
+        }
+    }
+
+    package static func make(
+        sessionID: UUID?,
+        horizons: HorizonSet
+    ) throws -> MemorySearchIdentity {
+        guard !horizons.isEmpty else {
+            throw BrokerValidationError.invalid(
+                "memory search identity requires a non-empty horizon set"
+            )
+        }
+        if let sessionID {
+            return .session(sessionID: sessionID, horizons: horizons)
+        }
+        if horizons.contains(.working) {
+            throw BrokerValidationError.invalid("working horizon requires a session_id")
+        }
+        return .unscoped(horizons)
+    }
+}
+
 /// Broker Layered recall: scope/identity, multi-horizon fetch/merge, project filter.
 /// Feeds recall, layered search, and Compact assembly.
 /// Does not own Ranking scores, Recall assembly packing, Compact assembly packing,
@@ -154,8 +210,22 @@ package enum LayeredRecall {
         package var query: String
         package var mode: Memory.RetrievalMode
         package var topK: Int
-        package var sessionID: UUID?
-        package var horizons: HorizonSet
+        package var identity: MemorySearchIdentity
+
+        package var sessionID: UUID? { identity.sessionID }
+        package var horizons: HorizonSet { identity.horizons }
+
+        package init(
+            query: String,
+            mode: Memory.RetrievalMode,
+            topK: Int,
+            identity: MemorySearchIdentity
+        ) {
+            self.query = query
+            self.mode = mode
+            self.topK = topK
+            self.identity = identity
+        }
 
         package init(
             query: String,
@@ -163,12 +233,13 @@ package enum LayeredRecall {
             topK: Int,
             sessionID: UUID? = nil,
             horizons: HorizonSet
-        ) {
-            self.query = query
-            self.mode = mode
-            self.topK = topK
-            self.sessionID = sessionID
-            self.horizons = horizons
+        ) throws {
+            try self.init(
+                query: query,
+                mode: mode,
+                topK: topK,
+                identity: MemorySearchIdentity.make(sessionID: sessionID, horizons: horizons)
+            )
         }
     }
 
@@ -1335,32 +1406,34 @@ package enum LayeredRecall {
     ) async throws -> [Hit] {
         var hits: [Hit] = []
 
-        if request.horizons.contains(.working), let sessionID = request.sessionID, let lane = stores.workingLane(sessionID) {
-            let execution = try await lane.memory.searchExecution(
-                query: request.query,
-                mode: request.mode,
-                topK: max(1, min(request.topK, 6)),
-                frameFilter: nil,
-                timeRange: nil
-            )
-            for result in execution.hits {
-                guard let canonicalFrameID = await stores.canonicalFrameID(result.frameId, lane.memory) else {
-                    continue
-                }
-                hits.append(
-                    Hit(
-                        id: .working(sessionID: sessionID, frameID: canonicalFrameID),
-                        agentID: lane.agentID,
-                        runID: lane.runID,
-                        score: result.score + 0.25,
-                        text: stores.preview(result.previewText),
-                        preview: stores.preview(result.previewText),
-                        metadata: result.metadata,
-                        explanations: ["current session"] + result.explanations,
-                        timestampMs: result.metadata[MemoryMetadataKeys.createdAtMs].flatMap(Int64.init) ?? 0,
-                        sources: result.sources
-                    )
+        if case .session(let sessionID, let horizons) = request.identity, horizons.contains(.working) {
+            if let lane = stores.workingLane(sessionID) {
+                let execution = try await lane.memory.searchExecution(
+                    query: request.query,
+                    mode: request.mode,
+                    topK: max(1, min(request.topK, 6)),
+                    frameFilter: nil,
+                    timeRange: nil
                 )
+                for result in execution.hits {
+                    guard let canonicalFrameID = await stores.canonicalFrameID(result.frameId, lane.memory) else {
+                        continue
+                    }
+                    hits.append(
+                        Hit(
+                            id: .working(sessionID: sessionID, frameID: canonicalFrameID),
+                            agentID: lane.agentID,
+                            runID: lane.runID,
+                            score: result.score + 0.25,
+                            text: stores.preview(result.previewText),
+                            preview: stores.preview(result.previewText),
+                            metadata: result.metadata,
+                            explanations: ["current session"] + result.explanations,
+                            timestampMs: result.metadata[MemoryMetadataKeys.createdAtMs].flatMap(Int64.init) ?? 0,
+                            sources: result.sources
+                        )
+                    )
+                }
             }
         }
 

@@ -90,8 +90,13 @@ package enum BrokerCommand: Sendable, Equatable {
         package var query: String
         package var mode: SearchMode
         package var topK: Int
-        package var sessionID: UUID?
-        package var horizons: HorizonSet
+        /// Wire `session_id` before handler resolution. Omitted id may still mean
+        /// the one live session; do not treat this pair as ``MemorySearchIdentity``.
+        package var clientSessionID: UUID?
+        package var requestedHorizons: HorizonSet
+
+        package var sessionID: UUID? { clientSessionID }
+        package var horizons: HorizonSet { requestedHorizons }
     }
 
     package struct SessionStart: Sendable, Equatable {
@@ -485,8 +490,8 @@ extension BrokerCommand.MemorySearch {
             query: query,
             mode: mode,
             topK: topK,
-            sessionID: try BrokerCommand.parseOptionalSessionID(args),
-            horizons: horizons
+            clientSessionID: try BrokerCommand.parseOptionalSessionID(args),
+            requestedHorizons: horizons
         )
     }
 }
