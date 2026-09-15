@@ -1,19 +1,21 @@
 import Foundation
 import WaxCore
 
-/// Closed layered-search identity after session resolution.
+/// Post-resolution layered search identity.
 ///
-/// `.unscoped` must not contain `.working`. Empty `HorizonSet` is unrepresentable
-/// through ``make(sessionID:horizons:)``. Direct `.unscoped([.working])` can still
-/// be spelled; ``includesWorking`` stays false so search cannot nil-skip a UUID.
-package enum MemorySearchIdentity: Sendable, Equatable {
-    /// No resolved session. Horizons must be non-empty and must not contain `.working`.
-    case unscoped(HorizonSet)
-    /// Resolved session. Horizons must be non-empty; `.working` is legal.
-    case session(sessionID: UUID, horizons: HorizonSet)
+/// Working requires a session UUID. Unscoped working and empty horizons are not
+/// cases — they fail at ``make(sessionID:horizons:)`` / ``unscoped(_:)`` /
+/// ``session(sessionID:horizons:)``.
+package struct MemorySearchIdentity: Sendable, Equatable {
+    private enum Kind: Sendable, Equatable {
+        case unscoped(HorizonSet)
+        case session(sessionID: UUID, horizons: HorizonSet)
+    }
+
+    private let kind: Kind
 
     package var sessionID: UUID? {
-        switch self {
+        switch kind {
         case .unscoped:
             return nil
         case .session(let sessionID, _):
@@ -22,20 +24,34 @@ package enum MemorySearchIdentity: Sendable, Equatable {
     }
 
     package var horizons: HorizonSet {
-        switch self {
+        switch kind {
         case .unscoped(let horizons), .session(_, let horizons):
             return horizons
         }
     }
 
-    /// True only on ``session`` when horizons contain `.working`.
-    package var includesWorking: Bool {
-        switch self {
+    /// Non-nil only when a session identity includes `.working`.
+    package var workingSessionID: UUID? {
+        switch kind {
+        case .session(let sessionID, let horizons):
+            return horizons.contains(.working) ? sessionID : nil
         case .unscoped:
-            return false
-        case .session(_, let horizons):
-            return horizons.contains(.working)
+            return nil
         }
+    }
+
+    /// True only on session identity when horizons contain `.working`.
+    package var includesWorking: Bool { workingSessionID != nil }
+
+    package static func unscoped(_ horizons: HorizonSet) throws -> MemorySearchIdentity {
+        try make(sessionID: nil, horizons: horizons)
+    }
+
+    package static func session(
+        sessionID: UUID,
+        horizons: HorizonSet
+    ) throws -> MemorySearchIdentity {
+        try make(sessionID: sessionID, horizons: horizons)
     }
 
     package static func make(
@@ -48,12 +64,12 @@ package enum MemorySearchIdentity: Sendable, Equatable {
             )
         }
         if let sessionID {
-            return .session(sessionID: sessionID, horizons: horizons)
+            return MemorySearchIdentity(kind: .session(sessionID: sessionID, horizons: horizons))
         }
         if horizons.contains(.working) {
             throw BrokerValidationError.invalid("working horizon requires a session_id")
         }
-        return .unscoped(horizons)
+        return MemorySearchIdentity(kind: .unscoped(horizons))
     }
 }
 
@@ -1406,34 +1422,33 @@ package enum LayeredRecall {
     ) async throws -> [Hit] {
         var hits: [Hit] = []
 
-        if case .session(let sessionID, let horizons) = request.identity, horizons.contains(.working) {
-            if let lane = stores.workingLane(sessionID) {
-                let execution = try await lane.memory.searchExecution(
-                    query: request.query,
-                    mode: request.mode,
-                    topK: max(1, min(request.topK, 6)),
-                    frameFilter: nil,
-                    timeRange: nil
-                )
-                for result in execution.hits {
-                    guard let canonicalFrameID = await stores.canonicalFrameID(result.frameId, lane.memory) else {
-                        continue
-                    }
-                    hits.append(
-                        Hit(
-                            id: .working(sessionID: sessionID, frameID: canonicalFrameID),
-                            agentID: lane.agentID,
-                            runID: lane.runID,
-                            score: result.score + 0.25,
-                            text: stores.preview(result.previewText),
-                            preview: stores.preview(result.previewText),
-                            metadata: result.metadata,
-                            explanations: ["current session"] + result.explanations,
-                            timestampMs: result.metadata[MemoryMetadataKeys.createdAtMs].flatMap(Int64.init) ?? 0,
-                            sources: result.sources
-                        )
-                    )
+        if let sessionID = request.identity.workingSessionID,
+           let lane = stores.workingLane(sessionID) {
+            let execution = try await lane.memory.searchExecution(
+                query: request.query,
+                mode: request.mode,
+                topK: max(1, min(request.topK, 6)),
+                frameFilter: nil,
+                timeRange: nil
+            )
+            for result in execution.hits {
+                guard let canonicalFrameID = await stores.canonicalFrameID(result.frameId, lane.memory) else {
+                    continue
                 }
+                hits.append(
+                    Hit(
+                        id: .working(sessionID: sessionID, frameID: canonicalFrameID),
+                        agentID: lane.agentID,
+                        runID: lane.runID,
+                        score: result.score + 0.25,
+                        text: stores.preview(result.previewText),
+                        preview: stores.preview(result.previewText),
+                        metadata: result.metadata,
+                        explanations: ["current session"] + result.explanations,
+                        timestampMs: result.metadata[MemoryMetadataKeys.createdAtMs].flatMap(Int64.init) ?? 0,
+                        sources: result.sources
+                    )
+                )
             }
         }
 

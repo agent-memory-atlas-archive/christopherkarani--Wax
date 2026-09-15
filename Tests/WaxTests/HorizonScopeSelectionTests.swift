@@ -66,10 +66,12 @@ struct HorizonScopeSelectionTests {
     ])
     func unscopedIdentityAllowsEpisodicAndDurableWithoutSession(horizons: HorizonSet) throws {
         let identity = try MemorySearchIdentity.make(sessionID: nil, horizons: horizons)
-        #expect(identity == .unscoped(horizons))
+        let unscoped = try MemorySearchIdentity.unscoped(horizons)
+        #expect(identity == unscoped)
         #expect(identity.sessionID == nil)
         #expect(identity.horizons == horizons)
         #expect(identity.includesWorking == false)
+        #expect(identity.workingSessionID == nil)
 
         let request = LayeredRecall.SearchRequest(
             query: "q",
@@ -91,6 +93,9 @@ struct HorizonScopeSelectionTests {
     func identityMakeRejectsWorkingWithoutSession(horizons: HorizonSet) {
         #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
             _ = try MemorySearchIdentity.make(sessionID: nil, horizons: horizons)
+        }
+        #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
+            _ = try MemorySearchIdentity.unscoped(horizons)
         }
         #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
             _ = try LayeredRecall.SearchRequest(
@@ -116,6 +121,16 @@ struct HorizonScopeSelectionTests {
         )) {
             _ = try MemorySearchIdentity.make(sessionID: sessionID, horizons: [])
         }
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.unscoped([])
+        }
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.session(sessionID: sessionID, horizons: [])
+        }
     }
 
     @Test
@@ -125,32 +140,29 @@ struct HorizonScopeSelectionTests {
             sessionID: sessionID,
             horizons: [.working, .durable]
         )
-        #expect(identity == .session(sessionID: sessionID, horizons: [.working, .durable]))
+        let session = try MemorySearchIdentity.session(
+            sessionID: sessionID,
+            horizons: [.working, .durable]
+        )
+        #expect(identity == session)
         #expect(identity.sessionID == sessionID)
         #expect(identity.horizons == [.working, .durable])
         #expect(identity.includesWorking == true)
+        #expect(identity.workingSessionID == sessionID)
 
         let durableOnly = try MemorySearchIdentity.make(
             sessionID: sessionID,
             horizons: .durable
         )
         #expect(durableOnly.includesWorking == false)
+        #expect(durableOnly.workingSessionID == nil)
         #expect(durableOnly.sessionID == sessionID)
-    }
-
-    @Test
-    func unscopedWorkingDirectCaseDoesNotClaimIncludesWorking() {
-        // Direct case construction can still name an illegal HorizonSet; includesWorking
-        // stays false so search cannot nil-skip a UUID that was never there.
-        let identity = MemorySearchIdentity.unscoped([.working])
-        #expect(identity.includesWorking == false)
-        #expect(identity.sessionID == nil)
     }
 
     @Test
     func sessionWorkingIdentityRunsWorkingLaneWithoutNilSkip() async throws {
         try await withWorkingSearchLane { stores, sessionID, token in
-            let identity = MemorySearchIdentity.session(
+            let identity = try MemorySearchIdentity.session(
                 sessionID: sessionID,
                 horizons: .working
             )
@@ -233,7 +245,7 @@ struct HorizonScopeSelectionTests {
                     query: token,
                     mode: .textOnly,
                     topK: 5,
-                    identity: .unscoped(.episodic)
+                    identity: try MemorySearchIdentity.unscoped(.episodic)
                 ),
                 stores: stores
             )
