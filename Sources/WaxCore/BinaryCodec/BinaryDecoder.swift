@@ -99,29 +99,85 @@ package struct BinaryDecoder {
 
     // MARK: - Arrays
 
-    package mutating func decodeArray<T>(_ type: T.Type = T.self) throws -> [T] {
+    package mutating func decodeArray(_ type: UInt8.Type) throws -> [UInt8] {
+        try decodeArrayElements { try $0.decode(UInt8.self) }
+    }
+
+    package mutating func decodeArray(_ type: UInt16.Type) throws -> [UInt16] {
+        try decodeArrayElements { try $0.decode(UInt16.self) }
+    }
+
+    package mutating func decodeArray(_ type: UInt32.Type) throws -> [UInt32] {
+        try decodeArrayElements { try $0.decode(UInt32.self) }
+    }
+
+    package mutating func decodeArray(_ type: UInt64.Type) throws -> [UInt64] {
+        try decodeArrayElements { try $0.decode(UInt64.self) }
+    }
+
+    package mutating func decodeArray(_ type: Int64.Type) throws -> [Int64] {
+        try decodeArrayElements { try $0.decode(Int64.self) }
+    }
+
+    package mutating func decodeArray(_ type: String.Type) throws -> [String] {
+        try decodeArrayElements { try $0.decode(String.self) }
+    }
+
+    // MARK: - Optionals
+
+    package mutating func decodeOptional(_ type: UInt8.Type) throws -> UInt8? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(UInt8.self)
+    }
+
+    package mutating func decodeOptional(_ type: UInt16.Type) throws -> UInt16? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(UInt16.self)
+    }
+
+    package mutating func decodeOptional(_ type: UInt32.Type) throws -> UInt32? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(UInt32.self)
+    }
+
+    package mutating func decodeOptional(_ type: UInt64.Type) throws -> UInt64? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(UInt64.self)
+    }
+
+    package mutating func decodeOptional(_ type: Int64.Type) throws -> Int64? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(Int64.self)
+    }
+
+    package mutating func decodeOptional(_ type: String.Type) throws -> String? {
+        guard try decodeOptionalIsPresent() else { return nil }
+        return try decode(String.self)
+    }
+
+    private mutating func decodeArrayElements<Element>(
+        _ decodeElement: (inout BinaryDecoder) throws -> Element
+    ) throws -> [Element] {
         let count = Int(try decode(UInt32.self))
         guard count <= limits.maxArrayCount else {
             throw WaxError.decodingError(reason: "array count \(count) exceeds limit \(limits.maxArrayCount)")
         }
 
-        var result: [T] = []
+        var result: [Element] = []
         result.reserveCapacity(count)
         for _ in 0..<count {
-            result.append(try decode(type))
+            result.append(try decodeElement(&self))
         }
         return result
     }
 
-    // MARK: - Optionals
-
-    package mutating func decodeOptional<T>(_ type: T.Type) throws -> T? {
+    private mutating func decodeOptionalIsPresent() throws -> Bool {
         let tag = try decode(UInt8.self)
         switch tag {
         case 0:
-            return nil
+            return false
         case 1:
-            return try decode(type)
+            return true
         default:
             throw WaxError.decodingError(reason: "invalid optional tag \(tag)")
         }
@@ -131,19 +187,6 @@ package struct BinaryDecoder {
 
     package mutating func decodeFixedBytes(count: Int) throws -> Data {
         return try read(count: count, context: "fixed bytes[\(count)]")
-    }
-
-    // MARK: - Generic decode support
-
-    package mutating func decode<T>(_ type: T.Type) throws -> T {
-        if type == UInt8.self { return try decode(UInt8.self) as! T }
-        if type == UInt16.self { return try decode(UInt16.self) as! T }
-        if type == UInt32.self { return try decode(UInt32.self) as! T }
-        if type == UInt64.self { return try decode(UInt64.self) as! T }
-        if type == Int64.self { return try decode(Int64.self) as! T }
-        if type == String.self { return try decode(String.self) as! T }
-
-        throw WaxError.decodingError(reason: "unsupported decode type: \(String(reflecting: type))")
     }
 
     // MARK: - Finalization
