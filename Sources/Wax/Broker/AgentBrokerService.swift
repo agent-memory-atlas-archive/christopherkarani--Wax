@@ -1017,12 +1017,6 @@ extension AgentBrokerService {
         )
         try validateDurableWriteContent(content: command.content, metadata: metadata)
 
-        let subject = command.subject
-        let predicate = command.predicate
-        let kind = command.kind
-        let aliases = command.aliases
-        let parsedObject = try command.object.map { try BrokerCommand.parseFactValue($0) }
-
         let isSessionTaskState =
             metadata[MemoryMetadataKeys.type] == MemoryType.taskState.rawValue
             && command.sessionID != nil
@@ -1035,30 +1029,30 @@ extension AgentBrokerService {
         }
 
         var entityID: Int64?
-        if let subject {
-            let requestedKind = kind?.trimmingCharacters(in: .whitespacesAndNewlines)
-            let resolvedKind: String
-            if let requestedKind, !requestedKind.isEmpty {
-                resolvedKind = requestedKind
-            } else if let existing = try await longTermMemory.entity(forKey: EntityKey(subject)),
-                      !existing.kind.isEmpty {
-                resolvedKind = existing.kind
-            } else {
-                resolvedKind = "concept"
-            }
+        var factID: Int64?
+        switch command.graphWrite {
+        case .none:
+            break
+        case .entity(let key, let kind, let aliases):
+            let resolvedKind = try await resolvedKnowledgeCaptureKind(key: key, decodedKind: kind)
             entityID = try await longTermMemory.upsertEntity(
-                key: EntityKey(subject),
+                key: key,
                 kind: resolvedKind,
                 aliases: aliases,
                 commit: false
             ).rawValue
-        }
-        var factID: Int64?
-        if let subject, let predicate, let parsedObject {
+        case .fact(let subject, let predicate, let object, let kind, let aliases):
+            let resolvedKind = try await resolvedKnowledgeCaptureKind(key: subject, decodedKind: kind)
+            entityID = try await longTermMemory.upsertEntity(
+                key: subject,
+                kind: resolvedKind,
+                aliases: aliases,
+                commit: false
+            ).rawValue
             factID = try await longTermMemory.assertFact(
-                subject: EntityKey(subject),
-                predicate: PredicateKey(predicate),
-                object: parsedObject,
+                subject: subject,
+                predicate: predicate,
+                object: object,
                 relation: .sets,
                 validFromMs: nil,
                 validToMs: nil,
@@ -1089,6 +1083,21 @@ extension AgentBrokerService {
             "durability": .string(metadata[MemoryMetadataKeys.durability] ?? MemoryDurability.working.rawValue),
             "display_text": .string(MemorySemantics.summarizeCandidate(command.content)),
         ])
+    }
+
+    /// Omitted kind decodes as `"concept"`. Keep an existing non-empty kind so
+    /// a subject-only capture does not rewrite it.
+    private func resolvedKnowledgeCaptureKind(
+        key: EntityKey,
+        decodedKind: String
+    ) async throws -> String {
+        if decodedKind != "concept" {
+            return decodedKind
+        }
+        if let existing = try await longTermMemory.entity(forKey: key), !existing.kind.isEmpty {
+            return existing.kind
+        }
+        return "concept"
     }
 
     private func currentSessionDiskStats() -> SessionDiskStats {
