@@ -9,7 +9,7 @@ enum MCPAutoSessionError: Error, Sendable {
 }
 
 struct MCPAutoSessionBinding: Sendable, Equatable {
-    var sessionID: String
+    var sessionID: UUID
     var ownership: MCPMemoryOwnership
     var conversationKey: String
 }
@@ -124,14 +124,14 @@ actor MCPAutoSessionCoordinator {
     }
 
     private static func closeOrphanedSession(
-        sessionID: String,
+        sessionID: UUID,
         perform: @escaping @Sendable (AgentBrokerRequest) async throws -> AgentBrokerResponse
     ) async {
         _ = try? await perform(
             AgentBrokerRequest(
                 command: "session_close",
                 arguments: [
-                    "session_id": .string(sessionID),
+                    "session_id": .string(sessionID.uuidString),
                     "content": .string("auto-session orphaned by transport teardown"),
                 ]
             )
@@ -191,7 +191,8 @@ actor MCPAutoSessionCoordinator {
 
         switch response.outcome {
         case .success(let payload):
-            guard let sessionID = payload.objectValue?["session_id"]?.stringValue, !sessionID.isEmpty else {
+            guard let raw = payload.objectValue?["session_id"]?.stringValue,
+                  let sessionID = UUID(uuidString: raw) else {
                 throw MCPAutoSessionError.openFailed(
                     message: "session_open returned no session_id",
                     retryable: true

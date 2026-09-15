@@ -131,7 +131,7 @@ func mcpClientSessionHintIsIsolatedPerInstance() {
         name: "session_start",
         payload: .object(["session_id": .string("AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")])
     )
-    #expect(first.current() == "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
+    #expect(first.current()?.uuidString == "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")
     #expect(second.current() == nil)
 }
 
@@ -154,7 +154,7 @@ func hintedSessionInjectsIntoTaskStateRememberAndRecall() async throws {
         #expect(opened.isError != true)
         let openPayload = try requireJSONObject(firstTextContent(opened))
         let sessionID = try #require(openPayload["session_id"] as? String)
-        #expect(hint.current() == sessionID)
+        #expect(hint.current()?.uuidString == sessionID)
 
         let remembered = await WaxMCPTools.handleCall(
             params: .init(
@@ -339,7 +339,7 @@ func hintedSessionOpenResumesSameUUIDWithoutConflictingExactPair() async throws 
         #expect(opened.isError != true)
         let openPayload = try requireJSONObject(firstTextContent(opened))
         let sessionID = try #require(openPayload["session_id"] as? String)
-        #expect(hint.current() == sessionID)
+        #expect(hint.current()?.uuidString == sessionID)
 
         let resumed = await WaxMCPTools.handleCall(
             params: .init(
@@ -354,7 +354,7 @@ func hintedSessionOpenResumesSameUUIDWithoutConflictingExactPair() async throws 
         #expect(resumed.isError != true)
         let resumedPayload = try requireJSONObject(firstTextContent(resumed))
         #expect(resumedPayload["session_id"] as? String == sessionID)
-        #expect(hint.current() == sessionID)
+        #expect(hint.current()?.uuidString == sessionID)
     }
 }
 
@@ -398,7 +398,7 @@ func hintedSessionOpenKeepsExplicitConversationsIsolated() async throws {
             try requireJSONObject(firstTextContent(second))["session_id"] as? String
         )
         #expect(secondID != firstID)
-        #expect(hint.current() == secondID)
+        #expect(hint.current()?.uuidString == secondID)
     }
 }
 
@@ -435,7 +435,7 @@ func hintedSessionOpenDoesNotStealConflictingExactPair() async throws {
         #expect(other.isError != true)
         let otherID = try #require(try requireJSONObject(firstTextContent(other))["session_id"] as? String)
         #expect(otherID != firstID)
-        #expect(hint.current() == firstID)
+        #expect(hint.current()?.uuidString == firstID)
 
         let exact = await WaxMCPTools.handleCall(
             params: .init(
@@ -476,7 +476,7 @@ func hintedSessionOpenDoesNotResumeDifferentAgentOnSameConnection() async throws
         let firstPayload = try requireJSONObject(firstTextContent(first))
         let firstID = try #require(firstPayload["session_id"] as? String)
         #expect(firstPayload["rebound"] as? Bool == false)
-        #expect(hint.current() == firstID)
+        #expect(hint.current()?.uuidString == firstID)
 
         let second = await WaxMCPTools.handleCall(
             params: .init(
@@ -495,7 +495,7 @@ func hintedSessionOpenDoesNotResumeDifferentAgentOnSameConnection() async throws
         let secondID = try #require(secondPayload["session_id"] as? String)
         #expect(secondID != firstID)
         #expect(secondPayload["rebound"] as? Bool == false)
-        #expect(hint.current() == secondID)
+        #expect(hint.current()?.uuidString == secondID)
     }
 }
 
@@ -536,7 +536,7 @@ func hintedSessionOpenRebindsSameAgentNewRunOnSameConnection() async throws {
         let secondPayload = try requireJSONObject(firstTextContent(second))
         #expect(secondPayload["session_id"] as? String == firstID)
         #expect(secondPayload["rebound"] as? Bool == true)
-        #expect(hint.current() == firstID)
+        #expect(hint.current()?.uuidString == firstID)
     }
 }
 
@@ -626,7 +626,7 @@ func hintedSessionSearchInheritsBoundSessionID() async throws {
         #expect(searched.isError != true)
         let payload = try requireJSONObject(firstTextContent(searched))
         let filters = try #require(payload["applied_filters"] as? [String: Any])
-        #expect(filters["session_id"] as? String == hint.current())
+        #expect(filters["session_id"] as? String == hint.current()?.uuidString)
     }
 }
 
@@ -650,7 +650,7 @@ func hintedSessionInjectsIntoStatsWithoutParrotingUUID() async throws {
         #expect(opened.isError != true)
         let openPayload = try requireJSONObject(firstTextContent(opened))
         let sessionID = try #require(openPayload["session_id"] as? String)
-        #expect(hint.current() == sessionID)
+        #expect(hint.current()?.uuidString == sessionID)
         #expect(isolated.current() == nil)
 
         let hintedStats = await WaxMCPTools.handleCall(

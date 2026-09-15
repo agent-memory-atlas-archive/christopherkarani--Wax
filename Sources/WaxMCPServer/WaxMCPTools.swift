@@ -179,11 +179,11 @@ enum WaxMCPTools {
 final class MCPBoundSessionRegistry: @unchecked Sendable {
     static let shared = MCPBoundSessionRegistry()
     private let lock = NSLock()
-    private var ids: [String: String] = [:]
+    private var ids: [String: UUID] = [:]
     private var ownerships: [String: MCPMemoryOwnership] = [:]
-    private var reverse: [String: Set<String>] = [:]
+    private var reverse: [UUID: Set<String>] = [:]
 
-    func current(for key: String) -> String? {
+    func current(for key: String) -> UUID? {
         lock.lock()
         defer { lock.unlock() }
         return ids[key]
@@ -195,7 +195,7 @@ final class MCPBoundSessionRegistry: @unchecked Sendable {
         return ownerships[key]
     }
 
-    func remember(key: String, sessionID: String?, ownership: MCPMemoryOwnership? = nil) {
+    func remember(key: String, sessionID: UUID?, ownership: MCPMemoryOwnership? = nil) {
         lock.lock()
         defer { lock.unlock() }
         if let previous = ids[key] {
@@ -204,7 +204,7 @@ final class MCPBoundSessionRegistry: @unchecked Sendable {
                 reverse.removeValue(forKey: previous)
             }
         }
-        if let sessionID, !sessionID.isEmpty {
+        if let sessionID {
             ids[key] = sessionID
             ownerships[key] = ownership ?? ownerships[key] ?? .transport
             var keys = reverse[sessionID] ?? []
@@ -216,7 +216,7 @@ final class MCPBoundSessionRegistry: @unchecked Sendable {
         }
     }
 
-    func invalidate(sessionID: String) {
+    func invalidate(sessionID: UUID) {
         lock.lock()
         defer { lock.unlock() }
         let keys = reverse.removeValue(forKey: sessionID) ?? []
@@ -240,7 +240,7 @@ final class MCPBoundSessionRegistry: @unchecked Sendable {
 /// Per MCP `Server` session id. HTTP creates one Server per client session; stdio has one Server.
 final class MCPClientSessionHint: @unchecked Sendable {
     private let lock = NSLock()
-    private var sessionID: String?
+    private var sessionID: UUID?
     private var ownership: MCPMemoryOwnership?
     private let connectionKey: String?
     private var context: MCPConnectionContext?
@@ -257,7 +257,7 @@ final class MCPClientSessionHint: @unchecked Sendable {
         }
     }
 
-    func current() -> String? {
+    func current() -> UUID? {
         lock.lock()
         defer { lock.unlock() }
         if let sessionID { return sessionID }
@@ -290,11 +290,11 @@ final class MCPClientSessionHint: @unchecked Sendable {
     func remember(name: String, payload: AgentBrokerValue) {
         switch name {
         case "session_start", "session_resume", "session_open":
-            if let sessionID = payload.objectValue?["session_id"]?.stringValue {
+            if let sessionID = Self.workingSessionID(from: payload) {
                 bind(sessionID, ownership: ownership ?? .transport)
             }
         case "session_end", "session_close":
-            if let ended = payload.objectValue?["session_id"]?.stringValue {
+            if let ended = Self.workingSessionID(from: payload) {
                 lock.lock()
                 let matches = sessionID == ended
                 lock.unlock()
@@ -307,7 +307,7 @@ final class MCPClientSessionHint: @unchecked Sendable {
         }
     }
 
-    func bind(_ sessionID: String?, ownership: MCPMemoryOwnership?) {
+    func bind(_ sessionID: UUID?, ownership: MCPMemoryOwnership?) {
         lock.lock()
         self.sessionID = sessionID
         self.ownership = ownership
@@ -326,6 +326,11 @@ final class MCPClientSessionHint: @unchecked Sendable {
         if let connectionKey {
             MCPAutoSessionCoordinatorStore.shared.remove(for: connectionKey)
         }
+    }
+
+    private static func workingSessionID(from payload: AgentBrokerValue) -> UUID? {
+        guard let raw = payload.objectValue?["session_id"]?.stringValue else { return nil }
+        return UUID(uuidString: raw)
     }
 }
 
@@ -480,23 +485,23 @@ private extension WaxMCPTools {
         switch BrokerCommandCatalog.canonicalCommand(for: name) ?? name {
         case "stats", "recall", "search", "memory_search", "corpus_search",
              "compact_context", "session_close", "session_end", "handoff":
-            arguments["session_id"] = .string(sessionID)
+            arguments["session_id"] = .string(sessionID.uuidString)
         case "session_open":
             if nonEmptyString(arguments["conversation_id"]) != nil { return }
             if nonEmptyString(arguments["agent_id"]) != nil { return }
             if nonEmptyString(arguments["run_id"]) != nil { return }
-            arguments["session_id"] = .string(sessionID)
+            arguments["session_id"] = .string(sessionID.uuidString)
         case "session_resume":
             // Selectors intentionally target another session; an empty resume
             // should recover this connection, not search every agent's manifests.
             if nonEmptyString(arguments["agent_id"]) != nil { return }
             if nonEmptyString(arguments["run_id"]) != nil { return }
-            arguments["session_id"] = .string(sessionID)
+            arguments["session_id"] = .string(sessionID.uuidString)
         case "remember":
             if let scope = nonEmptyString(arguments["scope"])?.lowercased(), scope == "durable" {
                 return
             }
-            arguments["session_id"] = .string(sessionID)
+            arguments["session_id"] = .string(sessionID.uuidString)
         default:
             break
         }

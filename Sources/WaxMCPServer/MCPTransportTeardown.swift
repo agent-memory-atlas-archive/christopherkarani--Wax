@@ -18,7 +18,7 @@ struct MCPTeardownOutcome: Sendable, Equatable {
     var status: String
     var reason: String
     var alreadyEnded: Bool
-    var sessionID: String?
+    var sessionID: UUID?
 
     static func skipped(_ reason: String) -> MCPTeardownOutcome {
         MCPTeardownOutcome(status: "skipped", reason: reason, alreadyEnded: false, sessionID: nil)
@@ -55,7 +55,7 @@ enum MCPTransportTeardown {
     }
 
     static func closeExactly(
-        sessionID: String,
+        sessionID: UUID,
         reason: MCPTeardownReason,
         perform: @escaping @Sendable (AgentBrokerRequest) async throws -> AgentBrokerResponse,
         timeoutSeconds: TimeInterval = defaultTimeoutSeconds
@@ -72,7 +72,7 @@ enum MCPTransportTeardown {
                         AgentBrokerRequest(
                             command: "session_close",
                             arguments: [
-                                "session_id": .string(sessionID),
+                                "session_id": .string(sessionID.uuidString),
                                 "content": .string("transport \(reason.rawValue)"),
                             ]
                         )

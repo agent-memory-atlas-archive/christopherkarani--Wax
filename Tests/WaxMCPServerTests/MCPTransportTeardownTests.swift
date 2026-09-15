@@ -32,7 +32,8 @@ func transportTeardownIsIdempotentAndExact() async throws {
             ]
         )
     )
-    let sessionID = try #require(opened.payload?.objectValue?["session_id"]?.stringValue)
+    let rawSessionID = try #require(opened.payload?.objectValue?["session_id"]?.stringValue)
+    let sessionID = try #require(UUID(uuidString: rawSessionID))
     MCPBoundSessionRegistry.shared.remember(key: "http-session-1", sessionID: sessionID, ownership: .transport)
 
     let first = await MCPTransportTeardown.checkpointBoundTransportSession(
@@ -75,7 +76,7 @@ func missingBindingSkipsTeardown() async {
 func harvestTimeoutDoesNotThrowIntoHTTPPath() async {
     MCPBoundSessionRegistry.shared.resetForTests()
     defer { MCPBoundSessionRegistry.shared.resetForTests() }
-    MCPBoundSessionRegistry.shared.remember(key: "slow", sessionID: UUID().uuidString, ownership: .transport)
+    MCPBoundSessionRegistry.shared.remember(key: "slow", sessionID: UUID(), ownership: .transport)
     let outcome = await MCPTransportTeardown.checkpointBoundTransportSession(
         connectionKey: "slow",
         reason: .idleExpiry,
