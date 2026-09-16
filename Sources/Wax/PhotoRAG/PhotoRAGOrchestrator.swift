@@ -853,7 +853,7 @@ package actor PhotoRAGOrchestrator {
         defer { inFlightPhotoIDs.remove(photoID) }
 
         guard FileManager.default.fileExists(atPath: file.url.path(percentEncoded: false)) else {
-            throw PhotoIngestError.fileMissing(id: photoID.id, url: file.url)
+            throw PhotoIngestError.fileMissing(id: photoID, url: file.url)
         }
 
         let imageData: Data

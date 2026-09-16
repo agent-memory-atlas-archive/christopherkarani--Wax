@@ -92,7 +92,7 @@ func photoRAGFileIngestMissingFileThrowsTypedError() async throws {
                 Issue.record("Expected .fileMissing, got \(error)")
                 return
             }
-            #expect(id == "missing")
+            #expect(id == PhotoID(source: .file, id: "missing"))
             #expect(url == missingURL)
         }
     }

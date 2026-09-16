@@ -554,7 +554,7 @@ package actor VideoRAGOrchestrator {
             throw VideoIngestError.invalidVideo(reason: "file URL must be a file:// URL")
         }
         guard FileManager.default.fileExists(atPath: file.url.path(percentEncoded: false)) else {
-            throw VideoIngestError.fileMissing(id: file.id.id, url: file.url)
+            throw VideoIngestError.fileMissing(id: file.id, url: file.url)
         }
 
         let videoID = file.id
