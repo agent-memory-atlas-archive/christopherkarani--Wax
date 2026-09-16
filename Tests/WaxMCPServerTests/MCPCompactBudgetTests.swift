@@ -54,7 +54,7 @@ import Testing
                 "stored": .string(content),
                 "display_text": .string("Remembered. 1 frame(s) added."),
             ]),
-            verbosity: "compact"
+            verbosity: .compact
         )
         let text = try #require(result.content.compactMap { block -> String? in
             if case .text(let value, _, _) = block { return value }
@@ -77,7 +77,7 @@ import Testing
                 "display_text": .string("Duplicated narrative"),
                 "results": .array([]),
             ]),
-            verbosity: "compact"
+            verbosity: .compact
         )
         let text = try #require(result.content.compactMap { block -> String? in
             if case .text(let value, _, _) = block { return value }
