@@ -488,6 +488,13 @@ extension AgentBrokerService {
             metadata: metadata,
             sessionID: sessionID
         )
+        await OwnerCard.compileIfNeeded(
+            memory: memory,
+            content: content,
+            metadata: metadata,
+            frameId: rememberResult.frameId,
+            nowMs: Self.nowMs()
+        )
         let after = await memory.runtimeStats()
         return RememberAssembly.payload(
             frameId: rememberResult.frameId,
