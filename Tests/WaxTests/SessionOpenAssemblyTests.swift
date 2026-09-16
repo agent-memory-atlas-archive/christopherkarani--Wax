@@ -4,22 +4,18 @@ import Testing
 
 @Test
 func sessionOpenAssemblyPassesThroughMissingHandoff() async {
-    let missing = AgentBrokerValue.object(["found": .bool(false)])
+    let missing = SessionHandoff(found: false)
     let compacted = await SessionOpenAssembly.compactHandoff(
         missing,
         recallQuery: "anything",
         tokenizer: .character
     )
-    #expect(compacted == missing)
+    #expect(compacted == .object(["found": .bool(false)]))
 }
 
 @Test
 func sessionOpenAssemblyHidesEmptyHandoffBody() async throws {
-    let empty = AgentBrokerValue.object([
-        "found": .bool(true),
-        "content": .string("   "),
-        "pending_tasks": .array([]),
-    ])
+    let empty = SessionHandoff(found: true, content: "   ", pendingTasks: [])
     let compacted = await SessionOpenAssembly.compactHandoff(
         empty,
         recallQuery: nil,
@@ -35,29 +31,21 @@ func sessionOpenAssemblyHidesEmptyHandoffBody() async throws {
 
 @Test
 func sessionOpenAssemblyNeedsTokenizerOnlyWhenHandoffHasBody() {
+    #expect(SessionOpenAssembly.needsTokenizer(SessionHandoff(found: false)) == false)
     #expect(
-        SessionOpenAssembly.needsTokenizer(.object(["found": .bool(false)])) == false
+        SessionOpenAssembly.needsTokenizer(
+            SessionHandoff(found: true, content: "   ", pendingTasks: [])
+        ) == false
     )
     #expect(
-        SessionOpenAssembly.needsTokenizer(.object([
-            "found": .bool(true),
-            "content": .string("   "),
-            "pending_tasks": .array([]),
-        ])) == false
+        SessionOpenAssembly.needsTokenizer(
+            SessionHandoff(found: true, content: "keep", pendingTasks: [])
+        ) == true
     )
     #expect(
-        SessionOpenAssembly.needsTokenizer(.object([
-            "found": .bool(true),
-            "content": .string("keep"),
-            "pending_tasks": .array([]),
-        ])) == true
-    )
-    #expect(
-        SessionOpenAssembly.needsTokenizer(.object([
-            "found": .bool(true),
-            "content": .string(""),
-            "pending_tasks": .array([.string("task")]),
-        ])) == true
+        SessionOpenAssembly.needsTokenizer(
+            SessionHandoff(found: true, content: "", pendingTasks: ["task"])
+        ) == true
     )
 }
 
@@ -65,11 +53,7 @@ func sessionOpenAssemblyNeedsTokenizerOnlyWhenHandoffHasBody() {
 func sessionOpenAssemblyTruncatesHandoffToTokenBudget() async throws {
     let content = String(repeating: "a", count: BrokerLimits.maxSessionOpenHandoffContentTokens + 40)
     let compacted = await SessionOpenAssembly.compactHandoff(
-        .object([
-            "found": .bool(true),
-            "content": .string(content),
-            "pending_tasks": .array([]),
-        ]),
+        SessionHandoff(found: true, content: content, pendingTasks: []),
         recallQuery: nil,
         tokenizer: .character
     )
@@ -86,11 +70,7 @@ func sessionOpenAssemblyCapsPendingTasksAndTaskBytes() async throws {
     let oversized = String(repeating: "t", count: BrokerLimits.maxSessionOpenPendingTaskBytes + 8)
     let tasks = (1...5).map { "task-\($0)-\(oversized)" }
     let compacted = await SessionOpenAssembly.compactHandoff(
-        .object([
-            "found": .bool(true),
-            "content": .string("keep"),
-            "pending_tasks": .array(tasks.map { .string($0) }),
-        ]),
+        SessionHandoff(found: true, content: "keep", pendingTasks: tasks),
         recallQuery: nil,
         tokenizer: .character
     )
@@ -108,11 +88,11 @@ func sessionOpenAssemblyCapsPendingTasksAndTaskBytes() async throws {
 @Test
 func sessionOpenAssemblyMarksLowRelevanceForUnrelatedRecallQuery() async {
     let compacted = await SessionOpenAssembly.compactHandoff(
-        .object([
-            "found": .bool(true),
-            "content": .string("ship waxmcp 0.1.41 homebrew sha"),
-            "pending_tasks": .array([]),
-        ]),
+        SessionHandoff(
+            found: true,
+            content: "ship waxmcp 0.1.41 homebrew sha",
+            pendingTasks: []
+        ),
         recallQuery: "zzzz-unrelated-query-qqqq",
         tokenizer: .character
     )
@@ -129,12 +109,13 @@ func sessionOpenAssemblyUtf8PrefixDoesNotSplitGrapheme() {
 
 @Test
 func sessionOpenAssemblyBootstrapPayloadKeepsWireShape() throws {
+    let sessionID = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
     let recall = AgentBrokerValue.object([
         "query": .string("q"),
         "warning": .string("hybrid fell back to text"),
     ])
     let payload = SessionOpenAssembly.bootstrapPayload(
-        sessionID: "SID",
+        sessionID: sessionID,
         rebound: true,
         handoff: .object(["found": .bool(false)]),
         recall: recall
@@ -143,8 +124,21 @@ func sessionOpenAssemblyBootstrapPayloadKeepsWireShape() throws {
     #expect(Set(object.keys) == [
         "session_id", "rebound", "share_prompt", "handoff", "recall", "warning",
     ])
-    #expect(object["session_id"]?.stringValue == "SID")
+    #expect(object["session_id"]?.stringValue == sessionID.uuidString)
     #expect(object["rebound"]?.boolValue == true)
-    #expect(object["share_prompt"]?.stringValue?.contains("SID") == true)
+    #expect(object["share_prompt"]?.stringValue?.contains(sessionID.uuidString) == true)
     #expect(object["warning"]?.stringValue == "hybrid fell back to text")
+}
+
+@Test
+func sessionOpenAssemblyBootstrapPayloadStringifiesUUIDOnWire() throws {
+    let sessionID = UUID()
+    let payload = SessionOpenAssembly.bootstrapPayload(
+        sessionID: sessionID,
+        rebound: false,
+        handoff: .object(["found": .bool(false)]),
+        recall: nil
+    )
+    let object = try #require(payload.objectValue)
+    #expect(object["session_id"]?.stringValue == sessionID.uuidString)
 }
