@@ -92,7 +92,7 @@ struct MCPConnectionRecoveryTests {
                 sessionHint: firstHint
             )
             #expect(result.isError != true)
-            #expect(firstHint.current() == firstID)
+            #expect(firstHint.current()?.uuidString == firstID)
         }
     }
 
@@ -132,7 +132,7 @@ struct MCPConnectionRecoveryTests {
             )
             #expect(resumed.isError != true)
             #expect(try json(resumed)["session_id"] as? String == firstID)
-            #expect(hint.current() == firstID)
+            #expect(hint.current()?.uuidString == firstID)
 
             let selected = await WaxMCPTools.handleCall(
                 params: .init(name: "session_resume", arguments: [
@@ -142,7 +142,7 @@ struct MCPConnectionRecoveryTests {
             )
             #expect(selected.isError != true)
             #expect(try json(selected)["session_id"] as? String == secondID)
-            #expect(hint.current() == secondID)
+            #expect(hint.current()?.uuidString == secondID)
         }
     }
 
@@ -165,7 +165,7 @@ struct MCPConnectionRecoveryTests {
             )
             #expect(written.isError != true)
             #expect(try json(written)["project"] as? String == "connection-recovery")
-            #expect(hint.current() == secondID)
+            #expect(hint.current()?.uuidString == secondID)
         }
     }
 
@@ -234,7 +234,7 @@ struct MCPConnectionRecoveryTests {
             let sessionID = try await open(broker, hint: firstHint)
             _ = try await open(broker, hint: MCPClientSessionHint())
             let recoveredHint = MCPClientSessionHint(connectionKey: key)
-            #expect(recoveredHint.current() == sessionID)
+            #expect(recoveredHint.current()?.uuidString == sessionID)
             let closed = await WaxMCPTools.handleCall(
                 params: .init(name: "session_close", arguments: [
                     "content": .string("close after HTTP server recreate"),

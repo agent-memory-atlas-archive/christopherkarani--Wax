@@ -8,6 +8,42 @@ import Testing
 @Suite(.serialized)
 struct MCPAutoSessionCoordinatorTests {
     @Test
+    func mcpBoundSessionRejectsNonUUIDPayload() {
+        let hint = MCPClientSessionHint()
+        hint.remember(
+            name: "session_open",
+            payload: .object(["session_id": .string("not-a-uuid")])
+        )
+        #expect(hint.current() == nil)
+    }
+
+    @Test
+    func mcpBoundSessionRemembersUUIDFromSessionOpen() {
+        let hint = MCPClientSessionHint()
+        let id = UUID()
+        hint.remember(
+            name: "session_open",
+            payload: .object(["session_id": .string(id.uuidString)])
+        )
+        #expect(hint.current() == id)
+    }
+
+    @Test
+    func mcpBoundSessionCloseWithDifferentIDDoesNotUnbind() {
+        let hint = MCPClientSessionHint()
+        let bound = UUID()
+        hint.remember(
+            name: "session_open",
+            payload: .object(["session_id": .string(bound.uuidString)])
+        )
+        hint.remember(
+            name: "session_close",
+            payload: .object(["session_id": .string(UUID().uuidString)])
+        )
+        #expect(hint.current() == bound)
+    }
+
+    @Test
     func concurrentFirstRememberCallsShareOneSession() async throws {
         MCPBoundSessionRegistry.shared.resetForTests()
         defer { MCPBoundSessionRegistry.shared.resetForTests() }
@@ -48,7 +84,7 @@ struct MCPAutoSessionCoordinatorTests {
             #expect(results.allSatisfy { $0.isError != true })
             let sessionID = try #require(hint.current())
             let payloads = try results.map(requireAutoJSON)
-            #expect(Set(payloads.compactMap { $0["session_id"] as? String }) == [sessionID])
+            #expect(Set(payloads.compactMap { $0["session_id"] as? String }) == [sessionID.uuidString])
             #expect(hint.currentOwnership() == .transport)
         }
     }
@@ -240,7 +276,7 @@ struct MCPAutoSessionCoordinatorTests {
                 params: .init(
                     name: "session_close",
                     arguments: [
-                        "session_id": .string(staleID),
+                        "session_id": .string(staleID.uuidString),
                         "content": .string("out of band close"),
                     ]
                 ),
@@ -281,9 +317,10 @@ struct MCPAutoSessionCoordinatorTests {
     func reverseInvalidationClearsEveryKeyForBrokerUUID() {
         MCPBoundSessionRegistry.shared.resetForTests()
         defer { MCPBoundSessionRegistry.shared.resetForTests() }
-        MCPBoundSessionRegistry.shared.remember(key: "k1", sessionID: "SID-1", ownership: .transport)
-        MCPBoundSessionRegistry.shared.remember(key: "k2", sessionID: "SID-1", ownership: .transport)
-        MCPBoundSessionRegistry.shared.invalidate(sessionID: "SID-1")
+        let brokerID = UUID()
+        MCPBoundSessionRegistry.shared.remember(key: "k1", sessionID: brokerID, ownership: .transport)
+        MCPBoundSessionRegistry.shared.remember(key: "k2", sessionID: brokerID, ownership: .transport)
+        MCPBoundSessionRegistry.shared.invalidate(sessionID: brokerID)
         #expect(MCPBoundSessionRegistry.shared.current(for: "k1") == nil)
         #expect(MCPBoundSessionRegistry.shared.current(for: "k2") == nil)
     }
@@ -293,7 +330,7 @@ struct MCPAutoSessionCoordinatorTests {
         let gate = CoordinatorOpenGate()
         let closes = CoordinatorCloseRecorder()
         let coordinator = MCPAutoSessionCoordinator()
-        let openedID = UUID().uuidString
+        let openedID = UUID()
 
         let openTask = Task<Result<MCPAutoSessionBinding, Error>, Never> {
             do {
@@ -307,7 +344,7 @@ struct MCPAutoSessionCoordinatorTests {
                             await gate.markEntered()
                             await gate.waitForRelease()
                             return AgentBrokerResponse.success(
-                                payload: .object(["session_id": .string(openedID)])
+                                payload: .object(["session_id": .string(openedID.uuidString)])
                             )
                         case "session_close":
                             if let id = request.arguments["session_id"]?.stringValue {
@@ -336,7 +373,7 @@ struct MCPAutoSessionCoordinatorTests {
         case .failure(let error):
             #expect(String(describing: error).contains("transport closed"))
         }
-        #expect(await closes.closedSessionIDs == [openedID])
+        #expect(await closes.closedSessionIDs == [openedID.uuidString])
         #expect(await coordinator.currentBinding() == nil)
     }
 
@@ -344,7 +381,7 @@ struct MCPAutoSessionCoordinatorTests {
     func failedOpenIsRetryableAndRecoversOnNextCall() async throws {
         let attempts = CoordinatorAttemptCounter()
         let coordinator = MCPAutoSessionCoordinator()
-        let sessionID = UUID().uuidString
+        let sessionID = UUID()
 
         let perform: @Sendable (AgentBrokerRequest) async throws -> AgentBrokerResponse = { _ in
             let attempt = await attempts.increment()
@@ -355,7 +392,7 @@ struct MCPAutoSessionCoordinatorTests {
                 )
             }
             return AgentBrokerResponse.success(
-                payload: .object(["session_id": .string(sessionID)])
+                payload: .object(["session_id": .string(sessionID.uuidString)])
             )
         }
 
