@@ -100,6 +100,13 @@ package enum OwnerCard {
         )
     }
 
+    /// True when a searched note would compile to a card slot (drop it so the
+    /// structured row does not occupy a second person-lane seat).
+    package static func matchesCompiledSlot(text: String, metadata: [String: String]) -> Bool {
+        let type = metadata[MemoryMetadataKeys.type].flatMap(MemoryType.init(rawValue:)) ?? .note
+        return match(content: text, memoryType: type) != nil
+    }
+
     package static func hits(
         from memory: MemoryOrchestrator,
         nowMs: Int64,
@@ -278,15 +285,15 @@ package enum OwnerCard {
             else { continue }
             let handle = String(text[handleRange])
             if swiftAttributeHandles.contains(handle.lowercased()) { continue }
-            let prefixLength = match.range.location
-            let lookback = min(prefixLength, 16)
             let prefix = nsText.substring(
-                with: NSRange(location: prefixLength - lookback, length: lookback)
+                with: NSRange(location: 0, length: match.range.location)
             ).lowercased()
-            if prefix.contains("not ")
-                || prefix.contains("n't ")
-                || prefix.contains("never ")
-                || prefix.hasSuffix("not")
+            let tail = String(prefix.suffix(12))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if tail.hasSuffix("do not")
+                || tail.hasSuffix("don't")
+                || tail.hasSuffix("dont")
+                || tail.hasSuffix("never")
             {
                 continue
             }

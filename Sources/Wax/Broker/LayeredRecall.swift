@@ -1276,7 +1276,10 @@ package enum LayeredRecall {
                 )
                 if let card = OwnerCard.collapsedHit(from: cardHits, preview: stores.preview) {
                     // Card leads; leftover prefs still fill the window.
-                    let rest = searched.filter { !$0.explanations.contains("owner card") }
+                    let rest = searched.filter { hit in
+                        !hit.explanations.contains("owner card")
+                            && !OwnerCard.matchesCompiledSlot(text: hit.text, metadata: hit.metadata)
+                    }
                     merged = Array(([card] + rest).prefix(request.limit))
                 } else {
                     merged = searched

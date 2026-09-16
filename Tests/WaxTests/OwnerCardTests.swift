@@ -157,8 +157,9 @@ struct OwnerCardTests {
                 ),
                 stores: stores
             )
-            #expect(card.hits.first?.text == "X handle: @ckarani7")
-            #expect(!(card.hits.first?.text.contains("GitLiveProbe") ?? true))
+            let lead = try #require(card.hits.first?.text)
+            #expect(lead == "X handle: @ckarani7")
+            #expect(!lead.contains("GitLiveProbe"))
 
             let search = try await LayeredRecall.recall(
                 request: .init(
@@ -216,7 +217,7 @@ struct OwnerCardTests {
             )
             let recalled = try await LayeredRecall.recall(
                 request: .init(
-                    query: "standing preferences",
+                    query: "Always allow",
                     scope: .global,
                     limit: 3,
                     searchTopK: 8,
