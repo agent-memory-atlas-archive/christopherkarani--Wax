@@ -679,7 +679,15 @@ struct BrokerCommandDecodeTests {
             return
         }
         #expect(knowledge.writeSemantics.durability == .durable)
-        #expect(knowledge.object == .string("broker memory"))
+        #expect(
+            knowledge.graphWrite == .fact(
+                subject: EntityKey("project:wax"),
+                predicate: PredicateKey("owns"),
+                object: .string("broker memory"),
+                kind: "concept",
+                aliases: []
+            )
+        )
 
         let exported = try BrokerCommand.decode(
             command: "markdown_export",
@@ -701,6 +709,114 @@ struct BrokerCommandDecodeTests {
             return
         }
         #expect(settings.maxCandidates == 3)
+    }
+
+    @Test(arguments: [
+        (name: "object without subject or predicate", extra: ["object": AgentBrokerValue.string("x")]),
+        (name: "predicate without subject", extra: ["predicate": .string("owns")]),
+        (name: "subject and object without predicate", extra: [
+            "subject": .string("project:wax"),
+            "object": .string("x"),
+        ]),
+        (name: "predicate and object without subject", extra: [
+            "predicate": .string("owns"),
+            "object": .string("x"),
+        ]),
+        (name: "subject and predicate without object", extra: [
+            "subject": .string("project:wax"),
+            "predicate": .string("owns"),
+        ]),
+    ])
+    func knowledgeCaptureRejectsIncompleteGraphWrite(
+        name: String,
+        extra: [String: AgentBrokerValue]
+    ) {
+        var arguments: [String: AgentBrokerValue] = [
+            "content": .string("Wax owns broker memory")
+        ]
+        for (key, value) in extra {
+            arguments[key] = value
+        }
+        #expect(throws: BrokerValidationError.self, "\(name) must fail at decode") {
+            _ = try BrokerCommand.decode(command: "knowledge_capture", arguments: arguments)
+        }
+    }
+
+    @Test
+    func knowledgeCaptureDecodesClosedGraphWrites() throws {
+        let none = try BrokerCommand.decode(
+            command: "knowledge_capture",
+            arguments: ["content": .string("plain note")]
+        )
+        guard case .knowledgeCapture(let noneCapture) = none else {
+            Issue.record("expected knowledge_capture")
+            return
+        }
+        #expect(noneCapture.graphWrite == .none)
+
+        let entity = try BrokerCommand.decode(
+            command: "knowledge_capture",
+            arguments: [
+                "content": .string("Wax is a project"),
+                "subject": .string("project:wax"),
+                "kind": .string("   "),
+                "aliases": .array([.string("Wax")]),
+            ]
+        )
+        guard case .knowledgeCapture(let entityCapture) = entity else {
+            Issue.record("expected knowledge_capture")
+            return
+        }
+        #expect(
+            entityCapture.graphWrite == .entity(
+                key: EntityKey("project:wax"),
+                kind: "concept",
+                aliases: ["Wax"]
+            )
+        )
+
+        let typedFact = try BrokerCommand.decode(
+            command: "knowledge_capture",
+            arguments: [
+                "content": .string("Wax owns broker memory"),
+                "subject": .string("project:wax"),
+                "predicate": .string("owns"),
+                "object": .object(["entity": .string("project:memory")]),
+                "kind": .string("project"),
+            ]
+        )
+        guard case .knowledgeCapture(let factCapture) = typedFact else {
+            Issue.record("expected knowledge_capture")
+            return
+        }
+        #expect(
+            factCapture.graphWrite == .fact(
+                subject: EntityKey("project:wax"),
+                predicate: PredicateKey("owns"),
+                object: .entity(EntityKey("project:memory")),
+                kind: "project",
+                aliases: []
+            )
+        )
+    }
+
+    @Test
+    func knowledgeGraphWriteCasesAreClosed() {
+        let none: KnowledgeGraphWrite = .none
+        let entity: KnowledgeGraphWrite = .entity(
+            key: EntityKey("project:wax"),
+            kind: "concept",
+            aliases: []
+        )
+        let fact: KnowledgeGraphWrite = .fact(
+            subject: EntityKey("project:wax"),
+            predicate: PredicateKey("owns"),
+            object: .string("broker memory"),
+            kind: "concept",
+            aliases: []
+        )
+        #expect(none != entity)
+        #expect(entity != fact)
     }
 
     @Test

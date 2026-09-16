@@ -1,9 +1,57 @@
 import Foundation
 import WaxCore
 
+extension KnowledgeGraphWrite {
+    package static func decode(_ args: BrokerArguments) throws -> KnowledgeGraphWrite {
+        let subject = Self.presentIdentifier(try args.optionalString("subject"))
+        let predicate = Self.presentIdentifier(try args.optionalString("predicate"))
+        let object: AgentBrokerValue?
+        if let value = try args.optionalValue("object"), value != .null {
+            object = value
+        } else {
+            object = nil
+        }
+        let aliases = try args.optionalStringArray("aliases") ?? []
+        let kind = Self.resolvedKind(try args.optionalString("kind"))
+
+        switch (subject, predicate, object) {
+        case (nil, nil, nil):
+            return .none
+        case (let subject?, nil, nil):
+            return .entity(key: EntityKey(subject), kind: kind, aliases: aliases)
+        case (let subject?, let predicate?, let object?):
+            return .fact(
+                subject: EntityKey(subject),
+                predicate: PredicateKey(predicate),
+                object: try BrokerCommand.parseFactValue(object),
+                kind: kind,
+                aliases: aliases
+            )
+        case (nil, _, .some):
+            throw BrokerValidationError.invalid("object requires subject and predicate")
+        case (nil, .some, nil):
+            throw BrokerValidationError.invalid("predicate requires subject")
+        case (.some, nil, .some):
+            throw BrokerValidationError.invalid("object requires subject and predicate")
+        case (.some, .some, nil):
+            throw BrokerValidationError.invalid("fact requires subject, predicate, and object")
+        }
+    }
+
+    private static func presentIdentifier(_ raw: String?) -> String? {
+        guard let raw, !raw.isEmpty else { return nil }
+        return raw
+    }
+
+    private static func resolvedKind(_ raw: String?) -> String {
+        guard let raw, !raw.isEmpty else { return "concept" }
+        return raw
+    }
+}
+
 extension BrokerCommand {
     /// Wire JSON/string → ``FactValue``. Shared by `fact_assert` and
-    /// `knowledge_capture` decode.
+    /// `knowledge_capture` fact writes at decode.
     package static func parseFactValue(_ value: AgentBrokerValue) throws -> FactValue {
         switch value {
         case .string(let raw):

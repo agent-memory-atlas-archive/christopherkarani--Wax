@@ -1,6 +1,20 @@
 import Foundation
 import WaxCore
 
+/// Closed `knowledge_capture` graph write after wire decode.
+/// Incomplete subject/predicate/object triples fail at decode.
+package enum KnowledgeGraphWrite: Sendable, Equatable {
+    case none
+    case entity(key: EntityKey, kind: String, aliases: [String])
+    case fact(
+        subject: EntityKey,
+        predicate: PredicateKey,
+        object: FactValue,
+        kind: String,
+        aliases: [String]
+    )
+}
+
 /// Typed broker command decoded from the wire (`command` + `arguments`).
 ///
 /// Decode is the single validation + parse boundary. Handlers take typed
@@ -181,11 +195,7 @@ package enum BrokerCommand: Sendable, Equatable {
         package var destination: RememberDestination
         package var metadata: [String: String]
         package var cwd: String?
-        package var subject: String?
-        package var kind: String?
-        package var aliases: [String]
-        package var predicate: String?
-        package var object: FactValue?
+        package var graphWrite: KnowledgeGraphWrite
 
         package var sessionID: UUID? { destination.sessionID }
         package var writeSemantics: MemoryWriteSemantics { destination.writeSemantics }
@@ -668,11 +678,7 @@ extension BrokerCommand.KnowledgeCapture {
             destination: destination,
             metadata: metadata,
             cwd: try args.optionalString("cwd"),
-            subject: try args.optionalString("subject"),
-            kind: try args.optionalString("kind"),
-            aliases: try args.optionalStringArray("aliases") ?? [],
-            predicate: try args.optionalString("predicate"),
-            object: try args.optionalValue("object").map { try BrokerCommand.parseFactValue($0) }
+            graphWrite: try KnowledgeGraphWrite.decode(args)
         )
     }
 }
