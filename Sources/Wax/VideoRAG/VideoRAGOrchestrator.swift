@@ -144,7 +144,7 @@ package actor VideoRAGOrchestrator {
     package func syncLibrary(scope: VideoScope) async throws {
         let ids: [String] = switch scope {
         case .assetIDs(let ids):
-            ids
+            ids.map(\.id)
         case .fullLibrary:
             await MainActor.run {
                 let opts = PHFetchOptions()
@@ -554,10 +554,10 @@ package actor VideoRAGOrchestrator {
             throw VideoIngestError.invalidVideo(reason: "file URL must be a file:// URL")
         }
         guard FileManager.default.fileExists(atPath: file.url.path(percentEncoded: false)) else {
-            throw VideoIngestError.fileMissing(id: file.id, url: file.url)
+            throw VideoIngestError.fileMissing(id: file.id.id, url: file.url)
         }
 
-        let videoID = VideoID(source: .file, id: file.id)
+        let videoID = file.id
         let previousRoot = index.rootByVideoID[videoID]
 
         let (durationMs, keyframeImages) = try await buildKeyframes(url: file.url)
@@ -1146,7 +1146,7 @@ package actor VideoRAGOrchestrator {
 
     private static func dedupeFiles(_ files: [VideoFile]) -> [VideoFile] {
         guard files.count > 1 else { return files }
-        var seen: Set<String> = []
+        var seen: Set<VideoID> = []
         seen.reserveCapacity(files.count)
         var unique: [VideoFile] = []
         unique.reserveCapacity(files.count)

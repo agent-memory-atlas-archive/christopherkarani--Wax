@@ -43,7 +43,7 @@ Segments are created with configurable duration and overlap, allowing searches t
 | ``BuiltInMultimodalEmbeddings`` | Public factory for the on-device multimodal embedder |
 | ``VideoRAGConfig`` | Configuration for segmentation, embedding, vector search, and context budgets |
 | ``VideoTranscriptProvider`` | Public protocol for host-supplied transcript chunks |
-| ``VideoFile`` | Local-file descriptor used by ingestion |
+| ``VideoFile`` | Local-file descriptor; `id` is ``VideoID``. String convenience wraps `source: .file` |
 | ``VideoQuery`` | Query model for text, time, video ID, and context constraints |
 | ``VideoRAGContext`` | Recall result grouped into video items and segment hits |
 | `VideoRAGOrchestrator` | Package-only engine behind ``VideoMemory``; not public API |
@@ -52,8 +52,8 @@ Segments are created with configurable duration and overlap, allowing searches t
 
 The ingestion path currently supports:
 
-- Local files, deduplicated by normalized file URL and optional caller-provided ID
-- Photos-library videos when Photos is available, with iCloud-only assets treated as degraded metadata-only entries
+- Local files, deduplicated by ``VideoID`` (`VideoFile.id`). `VideoFile(id: String, url:)` wraps `source: .file`
+- Photos-library videos when Photos is available (`VideoScope.assetIDs` takes `[VideoID]`; wrap `localIdentifier` as `VideoID(source: .photos, id:)`), with iCloud-only assets treated as degraded metadata-only entries
 - Optional transcript chunks supplied by a host ``VideoTranscriptProvider``
 - Segment keyframe embeddings from an on-device multimodal embedding provider
 
