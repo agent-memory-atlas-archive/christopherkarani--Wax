@@ -1434,7 +1434,7 @@ package enum LayeredRecall {
                     types: request.memoryTypes
                 ))
             }
-            merged = mergeHits(
+            let searched = mergeHits(
                 sessionHits: personLaneWorking,
                 durableHits: personLaneDurable,
                 limit: request.limit,
@@ -1443,6 +1443,25 @@ package enum LayeredRecall {
                 liveCheckout: liveCheckout,
                 repoRootPath: repoRootPath
             )
+            if personLane {
+                let cardHits = await OwnerCard.hits(
+                    from: stores.longTermMemory,
+                    nowMs: stores.nowMs(),
+                    preview: stores.preview
+                )
+                if let card = OwnerCard.collapsedHit(from: cardHits, preview: stores.preview) {
+                    // Card leads; leftover prefs still fill the window.
+                    let rest = searched.filter { hit in
+                        !hit.explanations.contains("owner card")
+                            && !OwnerCard.matchesCompiledSlot(text: hit.text, metadata: hit.metadata)
+                    }
+                    merged = Array(([card] + rest).prefix(request.limit))
+                } else {
+                    merged = searched
+                }
+            } else {
+                merged = searched
+            }
         }
 
         let selected = selectHits(merged: merged, scope: request.scope, identity: identity)
