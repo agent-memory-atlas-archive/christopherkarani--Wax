@@ -177,7 +177,13 @@ package enum BrokerRecall {
             lines.append("\(index + 1). [\(kind)] frame=\(hit.frameID) score=\(String(format: "%.4f", hit.score)) \(hit.text)")
         }
 
-        let verbose = command.verbosity == "verbose"
+        let verbose: Bool
+        switch command.verbosity {
+        case .compact:
+            verbose = false
+        case .verbose:
+            verbose = true
+        }
         let results: [AgentBrokerValue] = result.hits.enumerated().map { index, hit in
             RecallPresent.renderRecallHit(hit, rank: index + 1, verbose: verbose, nowMs: nowMs)
         }
