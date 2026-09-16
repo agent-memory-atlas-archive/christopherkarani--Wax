@@ -219,7 +219,7 @@ func validateEvidenceRejectsBadConfidence(_ confidence: Double) {
 
     var decoder = try BinaryDecoder(data: bytes, limits: limits)
     #expect(throws: WaxError.self) {
-        let _: [UInt8] = try decoder.decodeArray()
+        _ = try decoder.decodeArray(UInt8.self)
     }
 }
 
@@ -283,13 +283,6 @@ func validateEvidenceRejectsBadConfidence(_ confidence: Double) {
     try encoder.encodeBytes(Data([0xAA, 0xBB]))
     try encoder.encode("ab")
     #expect(!encoder.data.isEmpty)
-}
-
-@Test func binaryDecoderUnsupportedTypeThrows() throws {
-    var decoder = try BinaryDecoder(data: Data([0x00]))
-    #expect(throws: WaxError.self) {
-        _ = try decoder.decode(Float.self)
-    }
 }
 
 // MARK: - WALEntryCodec malformed / invalid assumptions

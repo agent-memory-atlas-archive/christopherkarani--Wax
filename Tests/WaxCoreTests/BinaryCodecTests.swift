@@ -74,7 +74,7 @@ import Testing
     try encoder.encode([UInt8(1), UInt8(2), UInt8(3)])
 
     var decoder = try BinaryDecoder(data: encoder.data)
-    let result: [UInt8] = try decoder.decodeArray()
+    let result = try decoder.decodeArray(UInt8.self)
     #expect(result == [1, 2, 3])
     try decoder.finalize()
 }
@@ -84,7 +84,7 @@ import Testing
     try encoder.encode([UInt64]())
 
     var decoder = try BinaryDecoder(data: encoder.data)
-    let result: [UInt64] = try decoder.decodeArray()
+    let result = try decoder.decodeArray(UInt64.self)
     #expect(result == [])
     try decoder.finalize()
 }
@@ -182,18 +182,110 @@ import Testing
     try decoder.finalize()
 }
 
+@Test func optionalStringPresentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    try encoder.encode(Optional<String>.some("hello"))
+    #expect(encoder.data[0] == 1)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(String.self) == "hello")
+    try decoder.finalize()
+}
+
+@Test func optionalStringAbsentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    try encoder.encode(Optional<String>.none)
+    #expect(encoder.data.count == 1)
+    #expect(encoder.data[0] == 0)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(String.self) == nil)
+    try decoder.finalize()
+}
+
+@Test func optionalUInt8PresentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<UInt8>.some(7))
+    #expect(encoder.data.count == 2)
+    #expect(encoder.data[0] == 1)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(UInt8.self) == 7)
+    try decoder.finalize()
+}
+
+@Test func optionalUInt8AbsentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<UInt8>.none)
+    #expect(encoder.data.count == 1)
+    #expect(encoder.data[0] == 0)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(UInt8.self) == nil)
+    try decoder.finalize()
+}
+
+@Test func optionalUInt64PresentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<UInt64>.some(UInt64.max))
+    #expect(encoder.data.count == 9)
+    #expect(encoder.data[0] == 1)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(UInt64.self) == UInt64.max)
+    try decoder.finalize()
+}
+
+@Test func optionalUInt64AbsentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<UInt64>.none)
+    #expect(encoder.data.count == 1)
+    #expect(encoder.data[0] == 0)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(UInt64.self) == nil)
+    try decoder.finalize()
+}
+
+@Test func optionalInt64PresentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<Int64>.some(-42))
+    #expect(encoder.data.count == 9)
+    #expect(encoder.data[0] == 1)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(Int64.self) == -42)
+    try decoder.finalize()
+}
+
+@Test func optionalInt64AbsentRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    encoder.encode(Optional<Int64>.none)
+    #expect(encoder.data.count == 1)
+    #expect(encoder.data[0] == 0)
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeOptional(Int64.self) == nil)
+    try decoder.finalize()
+}
+
 // MARK: - Typed array encoders
+
+@Test func stringArrayRoundtrip() throws {
+    var encoder = BinaryEncoder()
+    try encoder.encode(["alpha", "", "世界"])
+
+    var decoder = try BinaryDecoder(data: encoder.data)
+    #expect(try decoder.decodeArray(String.self) == ["alpha", "", "世界"])
+    try decoder.finalize()
+}
 
 @Test func uint16ArrayRoundtrip() throws {
     var encoder = BinaryEncoder()
     try encoder.encode([UInt16(100), UInt16(200), UInt16(300)])
 
     var decoder = try BinaryDecoder(data: encoder.data)
-    let count = try decoder.decode(UInt32.self)
-    #expect(count == 3)
-    #expect(try decoder.decode(UInt16.self) == 100)
-    #expect(try decoder.decode(UInt16.self) == 200)
-    #expect(try decoder.decode(UInt16.self) == 300)
+    #expect(try decoder.decodeArray(UInt16.self) == [100, 200, 300])
     try decoder.finalize()
 }
 
@@ -202,10 +294,7 @@ import Testing
     try encoder.encode([UInt32(0xDEAD), UInt32(0xBEEF)])
 
     var decoder = try BinaryDecoder(data: encoder.data)
-    let count = try decoder.decode(UInt32.self)
-    #expect(count == 2)
-    #expect(try decoder.decode(UInt32.self) == 0xDEAD)
-    #expect(try decoder.decode(UInt32.self) == 0xBEEF)
+    #expect(try decoder.decodeArray(UInt32.self) == [0xDEAD, 0xBEEF])
     try decoder.finalize()
 }
 
@@ -214,11 +303,7 @@ import Testing
     try encoder.encode([Int64(-1), Int64(0), Int64(Int64.max)])
 
     var decoder = try BinaryDecoder(data: encoder.data)
-    let count = try decoder.decode(UInt32.self)
-    #expect(count == 3)
-    #expect(try decoder.decode(Int64.self) == -1)
-    #expect(try decoder.decode(Int64.self) == 0)
-    #expect(try decoder.decode(Int64.self) == Int64.max)
+    #expect(try decoder.decodeArray(Int64.self) == [-1, 0, Int64.max])
     try decoder.finalize()
 }
 
