@@ -931,6 +931,8 @@ struct BrokerCommandDecodeTests {
                 command: "knowledge_capture",
                 arguments: [
                     "content": .string("Wax owns broker memory"),
+                    "subject": .string("project:wax"),
+                    "predicate": .string("owns"),
                     "object": .array([.string("nope")]),
                 ]
             )
