@@ -45,6 +45,78 @@ package enum RecallIdentity: Sendable, Equatable {
     }
 }
 
+/// Post-resolution layered search identity.
+///
+/// Working requires a session UUID. Unscoped working and empty horizons are not
+/// cases — they fail at ``make(sessionID:horizons:)`` / ``unscoped(_:)`` /
+/// ``session(sessionID:horizons:)``.
+package struct MemorySearchIdentity: Sendable, Equatable {
+    private enum Kind: Sendable, Equatable {
+        case unscoped(HorizonSet)
+        case session(sessionID: UUID, horizons: HorizonSet)
+    }
+
+    private let kind: Kind
+
+    package var sessionID: UUID? {
+        switch kind {
+        case .unscoped:
+            return nil
+        case .session(let sessionID, _):
+            return sessionID
+        }
+    }
+
+    package var horizons: HorizonSet {
+        switch kind {
+        case .unscoped(let horizons), .session(_, let horizons):
+            return horizons
+        }
+    }
+
+    /// Non-nil only when a session identity includes `.working`.
+    package var workingSessionID: UUID? {
+        switch kind {
+        case .session(let sessionID, let horizons):
+            return horizons.contains(.working) ? sessionID : nil
+        case .unscoped:
+            return nil
+        }
+    }
+
+    /// True only on session identity when horizons contain `.working`.
+    package var includesWorking: Bool { workingSessionID != nil }
+
+    package static func unscoped(_ horizons: HorizonSet) throws -> MemorySearchIdentity {
+        try make(sessionID: nil, horizons: horizons)
+    }
+
+    package static func session(
+        sessionID: UUID,
+        horizons: HorizonSet
+    ) throws -> MemorySearchIdentity {
+        try make(sessionID: sessionID, horizons: horizons)
+    }
+
+    package static func make(
+        sessionID: UUID?,
+        horizons: HorizonSet
+    ) throws -> MemorySearchIdentity {
+        guard !horizons.isEmpty else {
+            throw BrokerValidationError.invalid(
+                "memory search identity requires a non-empty horizon set"
+            )
+        }
+        if let sessionID {
+            return MemorySearchIdentity(kind: .session(sessionID: sessionID, horizons: horizons))
+        }
+        if horizons.contains(.working) {
+            throw BrokerValidationError.invalid("working horizon requires a session_id")
+        }
+        return MemorySearchIdentity(kind: .unscoped(horizons))
+    }
+}
+
 /// Broker Layered recall: scope/identity, multi-horizon fetch/merge, project filter.
 /// Feeds recall, layered search, and Compact assembly.
 /// Does not own Ranking scores, Recall assembly packing, Compact assembly packing,
@@ -198,8 +270,22 @@ package enum LayeredRecall {
         package var query: String
         package var mode: Memory.RetrievalMode
         package var topK: Int
-        package var sessionID: UUID?
-        package var horizons: HorizonSet
+        package var identity: MemorySearchIdentity
+
+        package var sessionID: UUID? { identity.sessionID }
+        package var horizons: HorizonSet { identity.horizons }
+
+        package init(
+            query: String,
+            mode: Memory.RetrievalMode,
+            topK: Int,
+            identity: MemorySearchIdentity
+        ) {
+            self.query = query
+            self.mode = mode
+            self.topK = topK
+            self.identity = identity
+        }
 
         package init(
             query: String,
@@ -207,12 +293,13 @@ package enum LayeredRecall {
             topK: Int,
             sessionID: UUID? = nil,
             horizons: HorizonSet
-        ) {
-            self.query = query
-            self.mode = mode
-            self.topK = topK
-            self.sessionID = sessionID
-            self.horizons = horizons
+        ) throws {
+            try self.init(
+                query: query,
+                mode: mode,
+                topK: topK,
+                identity: MemorySearchIdentity.make(sessionID: sessionID, horizons: horizons)
+            )
         }
     }
 
@@ -1417,7 +1504,8 @@ package enum LayeredRecall {
     ) async throws -> [Hit] {
         var hits: [Hit] = []
 
-        if request.horizons.contains(.working), let sessionID = request.sessionID, let lane = stores.workingLane(sessionID) {
+        if let sessionID = request.identity.workingSessionID,
+           let lane = stores.workingLane(sessionID) {
             let execution = try await lane.memory.searchExecution(
                 query: request.query,
                 mode: request.mode,

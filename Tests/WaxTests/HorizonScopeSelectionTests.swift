@@ -58,4 +58,261 @@ struct HorizonScopeSelectionTests {
         #expect(HorizonSet.working.intersection([.episodic, .durable]).isEmpty)
         #expect(HorizonSet.all.subtracting([.working, .episodic, .durable]).isEmpty)
     }
+
+    @Test(arguments: [
+        HorizonSet.episodic,
+        HorizonSet.durable,
+        [.episodic, .durable] as HorizonSet,
+    ])
+    func unscopedIdentityAllowsEpisodicAndDurableWithoutSession(horizons: HorizonSet) throws {
+        let identity = try MemorySearchIdentity.make(sessionID: nil, horizons: horizons)
+        let unscoped = try MemorySearchIdentity.unscoped(horizons)
+        #expect(identity == unscoped)
+        #expect(identity.sessionID == nil)
+        #expect(identity.horizons == horizons)
+        #expect(identity.includesWorking == false)
+        #expect(identity.workingSessionID == nil)
+
+        let request = LayeredRecall.SearchRequest(
+            query: "q",
+            mode: .textOnly,
+            topK: 3,
+            identity: identity
+        )
+        #expect(request.sessionID == nil)
+        #expect(request.horizons == horizons)
+        #expect(request.identity.includesWorking == false)
+    }
+
+    @Test(arguments: [
+        HorizonSet.working,
+        [.working, .episodic] as HorizonSet,
+        [.working, .durable] as HorizonSet,
+        HorizonSet.all,
+    ])
+    func identityMakeRejectsWorkingWithoutSession(horizons: HorizonSet) {
+        #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
+            _ = try MemorySearchIdentity.make(sessionID: nil, horizons: horizons)
+        }
+        #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
+            _ = try MemorySearchIdentity.unscoped(horizons)
+        }
+        #expect(throws: BrokerValidationError.invalid("working horizon requires a session_id")) {
+            _ = try LayeredRecall.SearchRequest(
+                query: "q",
+                mode: .textOnly,
+                topK: 3,
+                sessionID: nil,
+                horizons: horizons
+            )
+        }
+    }
+
+    @Test
+    func identityMakeRejectsEmptyHorizons() {
+        let sessionID = UUID()
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.make(sessionID: nil, horizons: [])
+        }
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.make(sessionID: sessionID, horizons: [])
+        }
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.unscoped([])
+        }
+        #expect(throws: BrokerValidationError.invalid(
+            "memory search identity requires a non-empty horizon set"
+        )) {
+            _ = try MemorySearchIdentity.session(sessionID: sessionID, horizons: [])
+        }
+    }
+
+    @Test
+    func sessionIdentityAllowsWorkingAndReportsIncludesWorking() throws {
+        let sessionID = UUID()
+        let identity = try MemorySearchIdentity.make(
+            sessionID: sessionID,
+            horizons: [.working, .durable]
+        )
+        let session = try MemorySearchIdentity.session(
+            sessionID: sessionID,
+            horizons: [.working, .durable]
+        )
+        #expect(identity == session)
+        #expect(identity.sessionID == sessionID)
+        #expect(identity.horizons == [.working, .durable])
+        #expect(identity.includesWorking == true)
+        #expect(identity.workingSessionID == sessionID)
+
+        let durableOnly = try MemorySearchIdentity.make(
+            sessionID: sessionID,
+            horizons: .durable
+        )
+        #expect(durableOnly.includesWorking == false)
+        #expect(durableOnly.workingSessionID == nil)
+        #expect(durableOnly.sessionID == sessionID)
+    }
+
+    @Test
+    func sessionWorkingIdentityRunsWorkingLaneWithoutNilSkip() async throws {
+        try await withWorkingSearchLane { stores, sessionID, token in
+            let identity = try MemorySearchIdentity.session(
+                sessionID: sessionID,
+                horizons: .working
+            )
+            #expect(identity.includesWorking == true)
+            #expect(identity.sessionID == sessionID)
+
+            let hits = try await LayeredRecall.search(
+                request: LayeredRecall.SearchRequest(
+                    query: token,
+                    mode: .textOnly,
+                    topK: 5,
+                    identity: identity
+                ),
+                stores: stores
+            )
+            #expect(hits.contains { hit in
+                hit.text.contains(token) && hit.horizon == .working && hit.sessionID == sessionID
+            })
+        }
+    }
+
+    @Test
+    func unscopedEpisodicSearchRunsWithoutSessionUUID() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wax-unscoped-episodic-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var config = OrchestratorConfig.default
+        config.enableVectorSearch = false
+        config.enableStructuredMemory = false
+        let longTerm = try await MemoryOrchestrator(
+            at: root.appendingPathComponent("durable.wax"),
+            config: config
+        )
+        do {
+            let endedSessionID = UUID()
+            let token = "WAXUNSCOPED-\(UUID().uuidString.prefix(8))"
+            let manifest = BrokerSessionManifest(
+                sessionID: endedSessionID,
+                agentID: "ended-agent",
+                runID: "ended-run",
+                project: "Wax",
+                repo: "Wax",
+                storePath: "/tmp/ended-session-not-on-disk.wax",
+                eventLogPath: "/tmp/ended-session-not-on-disk.events",
+                status: .ended,
+                brokerLeaseOwnerID: nil,
+                leaseExpiresAtMs: nil,
+                createdAtMs: 0,
+                updatedAtMs: 0,
+                endedAtMs: 0
+            )
+            let ended = InMemoryEndedSessionStore(
+                manifests: [manifest],
+                searchHits: [
+                    endedSessionID: [
+                        LayeredRecall.EpisodicLaneHit(
+                            frameID: 7,
+                            score: 0.88,
+                            previewText: "episodic \(token) note",
+                            metadata: [:],
+                            explanations: [],
+                            canonicalFrameID: 7
+                        )
+                    ]
+                ]
+            )
+            let stores = LayeredRecall.Stores(
+                longTermMemory: longTerm,
+                workingLane: { _ in nil },
+                inferWriteScope: { _, _ in LayeredRecall.Identity() },
+                preview: { $0 ?? "" },
+                canonicalFrameID: { frameID, _ in frameID },
+                endedSessions: ended,
+                nowMs: { 0 }
+            )
+            let hits = try await LayeredRecall.search(
+                request: LayeredRecall.SearchRequest(
+                    query: token,
+                    mode: .textOnly,
+                    topK: 5,
+                    identity: try MemorySearchIdentity.unscoped(.episodic)
+                ),
+                stores: stores
+            )
+            #expect(hits.contains { $0.text.contains(token) && $0.horizon == .episodic })
+            try await longTerm.close()
+        } catch {
+            try? await longTerm.close()
+            throw error
+        }
+    }
+}
+
+private func withWorkingSearchLane(
+    _ body: (LayeredRecall.Stores, UUID, String) async throws -> Void
+) async throws {
+    let root = FileManager.default.temporaryDirectory
+        .appendingPathComponent("wax-working-search-\(UUID().uuidString)", isDirectory: true)
+    try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+    defer { try? FileManager.default.removeItem(at: root) }
+
+    var config = OrchestratorConfig.default
+    config.enableTextSearch = true
+    config.enableVectorSearch = false
+    config.enableStructuredMemory = false
+    let working = try await MemoryOrchestrator(
+        at: root.appendingPathComponent("working.wax"),
+        config: config
+    )
+    do {
+        let durable = try await MemoryOrchestrator(
+            at: root.appendingPathComponent("durable.wax"),
+            config: config
+        )
+        do {
+            let token = "WAXWORKING-\(UUID().uuidString.prefix(8))"
+            try await working.remember("working lane \(token) note")
+            try await working.flush()
+            let sessionID = UUID()
+            let stores = LayeredRecall.Stores(
+                longTermMemory: durable,
+                workingLane: { requested in
+                    guard requested == sessionID else { return nil }
+                    return LayeredRecall.WorkingLane(
+                        sessionID: sessionID,
+                        agentID: "agent",
+                        runID: "run",
+                        updatedAtMs: 0,
+                        project: nil,
+                        repo: nil,
+                        memory: working
+                    )
+                },
+                inferWriteScope: { _, _ in LayeredRecall.Identity() },
+                preview: { $0 ?? "" },
+                canonicalFrameID: { frameID, _ in frameID },
+                endedSessions: InMemoryEndedSessionStore(),
+                nowMs: { 0 }
+            )
+            try await body(stores, sessionID, token)
+            try await durable.close()
+        } catch {
+            try? await durable.close()
+            throw error
+        }
+        try await working.close()
+    } catch {
+        try? await working.close()
+        throw error
+    }
 }

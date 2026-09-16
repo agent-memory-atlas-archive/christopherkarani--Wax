@@ -406,6 +406,50 @@ struct BrokerCommandDecodeTests {
     }
 
     @Test
+    func memorySearchAllowsWorkingWithoutWireSessionId() throws {
+        let decoded = try BrokerCommand.decode(
+            command: "memory_search",
+            arguments: [
+                "query": .string("needle"),
+                "include_working": .bool(true),
+                "include_episodic": .bool(false),
+                "include_durable": .bool(false),
+            ]
+        )
+        guard case .memorySearch(let payload) = decoded else {
+            Issue.record("expected memory_search")
+            return
+        }
+        #expect(payload.sessionID == nil)
+        #expect(payload.horizons == [.working])
+        #expect(payload.clientSessionID == nil)
+        #expect(payload.requestedHorizons == [.working])
+    }
+
+    @Test
+    func memorySearchKeepsExplicitWireSessionId() throws {
+        let sessionID = UUID(uuidString: "AAAAAAAA-BBBB-CCCC-DDDD-EEEEEEEEEEEE")!
+        let decoded = try BrokerCommand.decode(
+            command: "memory_search",
+            arguments: [
+                "query": .string("needle"),
+                "session_id": .string(sessionID.uuidString),
+                "include_working": .bool(true),
+                "include_episodic": .bool(false),
+                "include_durable": .bool(false),
+            ]
+        )
+        guard case .memorySearch(let payload) = decoded else {
+            Issue.record("expected memory_search")
+            return
+        }
+        #expect(payload.sessionID == sessionID)
+        #expect(payload.clientSessionID == sessionID)
+        #expect(payload.horizons == [.working])
+        #expect(payload.requestedHorizons == [.working])
+    }
+
+    @Test
     func sessionAndHandoffDecode() throws {
         let start = try BrokerCommand.decode(
             command: "session_start",

@@ -742,13 +742,16 @@ extension AgentBrokerService {
             sessionID = nil
         }
         let horizons = Self.scopedHorizons(scope: scope, requested: requested)
-        var hits = try await layeredMemorySearch(
-            query: query,
-            mode: mode,
-            topK: topK,
-            sessionID: sessionID,
-            horizons: horizons
-        )
+        var hits: [LayeredMemoryHit] = []
+        if !horizons.isEmpty {
+            let identity = try MemorySearchIdentity.make(sessionID: sessionID, horizons: horizons)
+            hits = try await layeredMemorySearch(
+                query: query,
+                mode: mode,
+                topK: topK,
+                identity: identity
+            )
+        }
         if let sessionID {
             let writeScope = writeScope(for: sessionID)
             hits = Self.filterMemorySearchHits(
@@ -2647,16 +2650,14 @@ extension AgentBrokerService {
         query: String,
         mode: Memory.RetrievalMode,
         topK: Int,
-        sessionID: UUID?,
-        horizons: HorizonSet
+        identity: MemorySearchIdentity
     ) async throws -> [LayeredMemoryHit] {
         try await LayeredRecall.search(
             request: LayeredRecall.SearchRequest(
                 query: query,
                 mode: mode,
                 topK: topK,
-                sessionID: sessionID,
-                horizons: horizons
+                identity: identity
             ),
             stores: layeredRecallStores()
         )
