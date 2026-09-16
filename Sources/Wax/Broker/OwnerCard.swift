@@ -79,6 +79,27 @@ package enum OwnerCard {
         }
     }
 
+    /// Collapse current rows into one person-lane snippet so session-open
+    /// `limit: 3` still has room for non-card prefs.
+    package static func collapsedHit(
+        from hits: [LayeredRecall.Hit],
+        preview: @Sendable (String?) -> String
+    ) -> LayeredRecall.Hit? {
+        guard let first = hits.first else { return nil }
+        if hits.count == 1 { return first }
+        let text = hits.map(\.text).joined(separator: " · ")
+        return LayeredRecall.Hit(
+            id: first.id,
+            score: first.score,
+            text: text,
+            preview: preview(text),
+            metadata: first.metadata,
+            explanations: ["owner card"],
+            timestampMs: first.timestampMs,
+            sources: [.structured]
+        )
+    }
+
     package static func hits(
         from memory: MemoryOrchestrator,
         nowMs: Int64,
@@ -89,7 +110,7 @@ package enum OwnerCard {
             result = try await memory.facts(
                 about: ownerKey,
                 predicate: nil,
-                asOfMs: nowMs,
+                asOfMs: Int64.max,
                 limit: 32
             )
         } catch {
@@ -119,7 +140,7 @@ package enum OwnerCard {
                         MemoryMetadataKeys.durability: MemoryDurability.durable.rawValue,
                     ],
                     explanations: ["owner card"],
-                    timestampMs: hit.system.fromMs,
+                    timestampMs: hit.system.fromMs == 0 ? nowMs : hit.system.fromMs,
                     sources: [.structured]
                 )
             )
@@ -210,27 +231,68 @@ package enum OwnerCard {
             return nil
         case .implementor:
             let lower = text.lowercased()
-            if lower.contains("grok build") {
-                return "grok-build"
+            guard lower.contains("grok build") else { return nil }
+            if lower.contains("do not use grok")
+                || lower.contains("don't use grok")
+                || lower.contains("dont use grok")
+                || lower.contains("never use grok")
+            {
+                return nil
             }
-            return nil
+            return "grok-build"
         }
     }
+
+    private static let swiftAttributeHandles: Set<String> = [
+        "mainactor", "observable", "environment", "published", "state",
+        "binding", "viewbuilder", "escaping", "available", "unchecked",
+        "sendable", "discardable", "frozen", "inlinable", "objc",
+        "testable", "nsmanaged", "iboutlet", "ibaction",
+    ]
 
     private static func extractHandle(from text: String) -> String? {
         if let live = firstCapture(
             patterns: [#"((?i)(?:live\s+)?(?:x|twitter)\s+handle is\s+@?([A-Za-z0-9_]{2,30}))"#],
             in: text
         ) {
-            return "@\(live.trimmingCharacters(in: CharacterSet(charactersIn: "@")))"
+            return formatHandle(live)
         }
-        if let use = firstCapture(
-            patterns: [#"((?i)use\s+@([A-Za-z0-9_]{2,30}))"#],
-            in: text
-        ) {
-            return "@\(use)"
+        return lastUseHandle(in: text)
+    }
+
+    private static func formatHandle(_ raw: String) -> String {
+        let trimmed = raw.trimmingCharacters(in: CharacterSet(charactersIn: "@").union(.whitespaces))
+        return "@\(trimmed)"
+    }
+
+    private static func lastUseHandle(in text: String) -> String? {
+        guard let regex = try? NSRegularExpression(
+            pattern: #"(?i)\buse\s+@([A-Za-z0-9_]{2,30})\b"#
+        ) else { return nil }
+        let nsText = text as NSString
+        let full = NSRange(location: 0, length: nsText.length)
+        var last: String?
+        for match in regex.matches(in: text, range: full) {
+            guard match.numberOfRanges >= 2,
+                  let handleRange = Range(match.range(at: 1), in: text)
+            else { continue }
+            let handle = String(text[handleRange])
+            if swiftAttributeHandles.contains(handle.lowercased()) { continue }
+            let prefixLength = match.range.location
+            let lookback = min(prefixLength, 16)
+            let prefix = nsText.substring(
+                with: NSRange(location: prefixLength - lookback, length: lookback)
+            ).lowercased()
+            if prefix.contains("not ")
+                || prefix.contains("n't ")
+                || prefix.contains("never ")
+                || prefix.hasSuffix("not")
+            {
+                continue
+            }
+            last = formatHandle(handle)
         }
-        return nil
+        return last
     }
 
     private static func cleanedProduct(_ raw: String) -> String? {

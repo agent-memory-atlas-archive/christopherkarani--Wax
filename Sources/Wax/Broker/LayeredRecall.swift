@@ -1232,52 +1232,57 @@ package enum LayeredRecall {
         } else {
             // Global changes the project boundary, not query or filter matching.
             // Person-lane still drops other-project prefs when identity is resolved.
-            let cardHits = personLane
-                ? await OwnerCard.hits(
+            var personLaneWorking = filterHitsForGlobalPersonLane(
+                typedWorking,
+                memoryTypes: request.memoryTypes,
+                identity: identity
+            )
+            var personLaneDurable = filterHitsForGlobalPersonLane(
+                typedDurable,
+                memoryTypes: request.memoryTypes,
+                identity: identity
+            )
+            if personLane, identity.project != nil || identity.repo != nil {
+                // Type-only global retrieval can spend the window on foreign prefs.
+                // A project-scoped typed fetch keeps current-project prefs visible
+                // the same way single-type retrieval keeps the person-lane hit.
+                var scopedRequest = request
+                scopedRequest.scope = .project
+                scopedRequest.searchTopK = retrievalTopK(requested: request.searchTopK)
+                let scopedLanes = try await fetchLanes(request: scopedRequest, stores: stores)
+                personLaneWorking.append(contentsOf: filterHitsByMemoryTypes(
+                    scopedLanes.working,
+                    types: request.memoryTypes
+                ))
+                personLaneDurable.append(contentsOf: filterHitsByMemoryTypes(
+                    scopedLanes.durable,
+                    types: request.memoryTypes
+                ))
+            }
+            let searched = mergeHits(
+                sessionHits: personLaneWorking,
+                durableHits: personLaneDurable,
+                limit: request.limit,
+                nowMs: stores.nowMs(),
+                query: request.query,
+                liveCheckout: liveCheckout,
+                repoRootPath: repoRootPath
+            )
+            if personLane {
+                let cardHits = await OwnerCard.hits(
                     from: stores.longTermMemory,
                     nowMs: stores.nowMs(),
                     preview: stores.preview
                 )
-                : []
-            if personLane, !cardHits.isEmpty {
-                merged = Array(cardHits.prefix(request.limit))
-            } else {
-                var personLaneWorking = filterHitsForGlobalPersonLane(
-                    typedWorking,
-                    memoryTypes: request.memoryTypes,
-                    identity: identity
-                )
-                var personLaneDurable = filterHitsForGlobalPersonLane(
-                    typedDurable,
-                    memoryTypes: request.memoryTypes,
-                    identity: identity
-                )
-                if personLane, identity.project != nil || identity.repo != nil {
-                    // Type-only global retrieval can spend the window on foreign prefs.
-                    // A project-scoped typed fetch keeps current-project prefs visible
-                    // the same way single-type retrieval keeps the person-lane hit.
-                    var scopedRequest = request
-                    scopedRequest.scope = .project
-                    scopedRequest.searchTopK = retrievalTopK(requested: request.searchTopK)
-                    let scopedLanes = try await fetchLanes(request: scopedRequest, stores: stores)
-                    personLaneWorking.append(contentsOf: filterHitsByMemoryTypes(
-                        scopedLanes.working,
-                        types: request.memoryTypes
-                    ))
-                    personLaneDurable.append(contentsOf: filterHitsByMemoryTypes(
-                        scopedLanes.durable,
-                        types: request.memoryTypes
-                    ))
+                if let card = OwnerCard.collapsedHit(from: cardHits, preview: stores.preview) {
+                    // Card leads; leftover prefs still fill the window.
+                    let rest = searched.filter { !$0.explanations.contains("owner card") }
+                    merged = Array(([card] + rest).prefix(request.limit))
+                } else {
+                    merged = searched
                 }
-                merged = mergeHits(
-                    sessionHits: personLaneWorking,
-                    durableHits: personLaneDurable,
-                    limit: request.limit,
-                    nowMs: stores.nowMs(),
-                    query: request.query,
-                    liveCheckout: liveCheckout,
-                    repoRootPath: repoRootPath
-                )
+            } else {
+                merged = searched
             }
         }
 

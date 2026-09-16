@@ -17,6 +17,24 @@ struct OwnerCardTests {
             memoryType: .fact
         )
         #expect(replacement?.value == "@ckarani7")
+        #expect(
+            OwnerCard.match(
+                content: "Do not use @chris_karani. Use @ckarani7.",
+                memoryType: .fact
+            )?.value == "@ckarani7"
+        )
+        #expect(
+            OwnerCard.match(
+                content: "Use @MainActor on the Wax actor.",
+                memoryType: .fact
+            ) == nil
+        )
+        #expect(
+            OwnerCard.match(
+                content: "Use @Observable.",
+                memoryType: .fact
+            ) == nil
+        )
 
         #expect(
             OwnerCard.match(
@@ -55,6 +73,12 @@ struct OwnerCardTests {
         #expect(
             OwnerCard.match(
                 content: "Chris wants Always allow visible as its own Mac desktop sidebar page.",
+                memoryType: .userPreference
+            ) == nil
+        )
+        #expect(
+            OwnerCard.match(
+                content: "Do not use Grok Build for coding implementors.",
                 memoryType: .userPreference
             ) == nil
         )
@@ -133,8 +157,8 @@ struct OwnerCardTests {
                 ),
                 stores: stores
             )
-            #expect(card.hits.map(\.text) == ["X handle: @ckarani7"])
-            #expect(!card.hits.contains { $0.text.contains("GitLiveProbe") })
+            #expect(card.hits.first?.text == "X handle: @ckarani7")
+            #expect(!(card.hits.first?.text.contains("GitLiveProbe") ?? true))
 
             let search = try await LayeredRecall.recall(
                 request: .init(
@@ -147,6 +171,62 @@ struct OwnerCardTests {
                 stores: stores
             )
             #expect(search.hits.contains { $0.text.contains("GitLiveProbe") })
+            try await durable.close()
+        } catch {
+            try? await durable.close()
+            throw error
+        }
+    }
+
+    @Test
+    func personLaneKeepsNonSlotPrefsAfterCard() async throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wax-owner-card-rest-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        var config = OrchestratorConfig.default
+        config.enableTextSearch = true
+        config.enableVectorSearch = false
+        config.enableStructuredMemory = true
+        config.rag.searchMode = .textOnly
+        let durable = try await MemoryOrchestrator(
+            at: root.appendingPathComponent("durable.wax"),
+            config: config
+        )
+        do {
+            _ = try await durable.remember(
+                "Chris wants Always allow visible as its own Mac desktop sidebar page.",
+                metadata: [MemoryMetadataKeys.type: MemoryType.userPreference.rawValue]
+            )
+            try await durable.flush()
+            try await OwnerCard.apply(
+                OwnerCard.Match(slot: .xHandle, value: "@ckarani7"),
+                to: durable,
+                frameId: 99,
+                nowMs: 5_000
+            )
+            let stores = LayeredRecall.Stores(
+                longTermMemory: durable,
+                workingLane: { _ in nil },
+                inferWriteScope: { _, _ in .init(project: "Wax", repo: "Wax") },
+                preview: { $0 ?? "" },
+                canonicalFrameID: { frameID, _ in frameID },
+                endedSessions: InMemoryEndedSessionStore()
+            )
+            let recalled = try await LayeredRecall.recall(
+                request: .init(
+                    query: "standing preferences",
+                    scope: .global,
+                    limit: 3,
+                    searchTopK: 8,
+                    mode: .textOnly,
+                    memoryTypes: [.userPreference]
+                ),
+                stores: stores
+            )
+            #expect(recalled.hits.first?.text == "X handle: @ckarani7")
+            #expect(recalled.hits.contains { $0.text.contains("Always allow") })
             try await durable.close()
         } catch {
             try? await durable.close()
