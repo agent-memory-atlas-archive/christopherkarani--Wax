@@ -149,7 +149,7 @@ struct OwnerCardTests {
             let card = try await LayeredRecall.recall(
                 request: .init(
                     query: "facts about this person standing corrections",
-                    scope: .global,
+                    identity: .global(workingSessionID: nil),
                     limit: 3,
                     searchTopK: 8,
                     mode: .textOnly,
@@ -164,7 +164,7 @@ struct OwnerCardTests {
             let search = try await LayeredRecall.recall(
                 request: .init(
                     query: "GitLiveProbe",
-                    scope: .global,
+                    identity: .global(workingSessionID: nil),
                     limit: 8,
                     searchTopK: 8,
                     mode: .textOnly
@@ -218,7 +218,7 @@ struct OwnerCardTests {
             let recalled = try await LayeredRecall.recall(
                 request: .init(
                     query: "Always allow",
-                    scope: .global,
+                    identity: .global(workingSessionID: nil),
                     limit: 3,
                     searchTopK: 8,
                     mode: .textOnly,

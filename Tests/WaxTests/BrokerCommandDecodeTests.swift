@@ -994,7 +994,15 @@ struct BrokerCommandDecodeTests {
             Issue.record("expected knowledge_capture")
             return
         }
-        #expect(knowledge.object == .entity(EntityKey("agent:codex")))
+        #expect(
+            knowledge.graphWrite == .fact(
+                subject: EntityKey("project:wax"),
+                predicate: PredicateKey("owns"),
+                object: .entity(EntityKey("agent:codex")),
+                kind: "concept",
+                aliases: []
+            )
+        )
     }
 
     @Test

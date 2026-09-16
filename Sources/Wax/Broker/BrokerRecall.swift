@@ -158,9 +158,7 @@ package enum BrokerRecall {
         } else if parsedFilters.sessionId != nil {
             sessionExecution = MemoryOrchestrator.SearchExecution(
                 hits: [],
-                requestedMode: mode,
-                effectiveMode: mode,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: mode, embedding: .notRequested)
             )
             sessionHits = []
         } else {
@@ -378,21 +376,25 @@ package enum BrokerRecall {
             if lhs.1 != rhs.1 { return lhs.1 == .working }
             return lhs.0.frameId > rhs.0.frameId
         }
-        let effectiveMode: SearchMode
+        let diagnostics: RAGContext.Diagnostics
         switch (working.effectiveMode, durable.effectiveMode) {
         case (.textOnly, _), (_, .textOnly):
-            effectiveMode = .textOnly
+            diagnostics = .text(
+                requested: working.requestedMode,
+                embedding: worseQueryEmbeddingState(
+                    working.queryEmbeddingState,
+                    durable.queryEmbeddingState
+                )
+            )
         default:
-            effectiveMode = working.effectiveMode
+            diagnostics = .vector(
+                requested: working.requestedMode,
+                effective: working.effectiveMode
+            )
         }
         return MemoryOrchestrator.SearchExecution(
             hits: tagged.prefix(max(1, topK)).map(\.0),
-            requestedMode: working.requestedMode,
-            effectiveMode: effectiveMode,
-            queryEmbeddingState: worseQueryEmbeddingState(
-                working.queryEmbeddingState,
-                durable.queryEmbeddingState
-            )
+            diagnostics: diagnostics
         )
     }
 
@@ -447,11 +449,7 @@ package enum BrokerRecall {
             "results": .array(rows),
             "display_text": .string(text),
         ]
-        if let warning = AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: execution.requestedMode.diagnosticsSummary,
-            effectiveMode: execution.effectiveMode.diagnosticsSummary,
-            queryEmbeddingState: execution.queryEmbeddingState.rawValue
-        ) {
+        if let warning = AgentBrokerService.retrievalDowngradeWarning(execution.diagnostics) {
             payload["warning"] = .string(warning)
         }
         return PackedSearch(

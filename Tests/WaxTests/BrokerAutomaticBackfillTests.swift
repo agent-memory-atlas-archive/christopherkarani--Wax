@@ -88,15 +88,11 @@ struct BrokerAutomaticBackfillTests {
         let result = BrokerRecall.mergeSearchExecutions(
             working: MemoryOrchestrator.SearchExecution(
                 hits: [working],
-                requestedMode: .textOnly,
-                effectiveMode: .textOnly,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: .textOnly, embedding: .notRequested)
             ),
             durable: MemoryOrchestrator.SearchExecution(
                 hits: [strongerDurable, durable],
-                requestedMode: .textOnly,
-                effectiveMode: .textOnly,
-                queryEmbeddingState: .notRequested
+                diagnostics: .text(requested: .textOnly, embedding: .notRequested)
             ),
             topK: 3
         )
