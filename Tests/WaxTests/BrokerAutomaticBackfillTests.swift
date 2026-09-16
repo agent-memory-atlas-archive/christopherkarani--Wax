@@ -49,10 +49,12 @@ struct BrokerAutomaticBackfillTests {
     @Test(arguments: [false, true])
     func mergedSearchDoesNotHideEitherStoresFallback(workingDegraded: Bool) {
         let active = MemoryOrchestrator.SearchExecution(
-            hits: [], requestedMode: .hybrid(), effectiveMode: .hybrid(), queryEmbeddingState: .available
+            hits: [],
+            diagnostics: .vector(requested: .hybrid(), effective: .hybrid())
         )
         let degraded = MemoryOrchestrator.SearchExecution(
-            hits: [], requestedMode: .hybrid(), effectiveMode: .textOnly, queryEmbeddingState: .timeout
+            hits: [],
+            diagnostics: .text(requested: .hybrid(), embedding: .timeout)
         )
         let result = AgentBrokerService.mergeSearchExecutions(
             working: workingDegraded ? degraded : active,
@@ -66,11 +68,11 @@ struct BrokerAutomaticBackfillTests {
     @Test
     func partialVectorFailureIsVisibleWithoutClaimingTheEmbedderIsMissing() {
         let mixed = AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)", effectiveMode: "mixed", queryEmbeddingState: "mixed"
+            .mixed(requested: .hybrid(alpha: 0.5))
         )
         #expect(mixed?.contains("some memory stores") == true)
         let timedOut = AgentBrokerService.retrievalDowngradeWarning(
-            requestedMode: "hybrid(alpha=0.500)", effectiveMode: "text", queryEmbeddingState: "available"
+            RAGContext.Diagnostics.text(requested: .hybrid(), embedding: .available)
         )
         #expect(timedOut?.contains("vector search") == true)
         #expect(timedOut?.contains("embedder missing") == false)
