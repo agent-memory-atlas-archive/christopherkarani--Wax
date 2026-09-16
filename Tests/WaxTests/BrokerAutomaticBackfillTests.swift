@@ -47,7 +47,7 @@ private struct BackfillSemanticEmbedder: EmbeddingProvider {
 @Suite("BrokerAutomaticBackfillTests")
 struct BrokerAutomaticBackfillTests {
     @Test(arguments: [false, true])
-    func mergedSearchDoesNotHideEitherStoresFallback(workingDegraded: Bool) {
+    func mergeSearchExecutionsDoesNotHideEitherStoresFallback(workingDegraded: Bool) {
         let active = MemoryOrchestrator.SearchExecution(
             hits: [],
             diagnostics: .vector(requested: .hybrid(), effective: .hybrid())
@@ -56,13 +56,51 @@ struct BrokerAutomaticBackfillTests {
             hits: [],
             diagnostics: .text(requested: .hybrid(), embedding: .timeout)
         )
-        let result = AgentBrokerService.mergeSearchExecutions(
+        let result = BrokerRecall.mergeSearchExecutions(
             working: workingDegraded ? degraded : active,
             durable: workingDegraded ? active : degraded,
             topK: 3
         )
         #expect(result.effectiveMode == .textOnly)
         #expect(result.queryEmbeddingState == .timeout)
+    }
+
+    @Test
+    func mergeSearchExecutionsPrefersWorkingOverDurableOnEqualScores() {
+        let working = MemoryOrchestrator.MemorySearchHit(
+            frameId: 1,
+            score: 0.42,
+            previewText: "working-note",
+            sources: [.text]
+        )
+        let durable = MemoryOrchestrator.MemorySearchHit(
+            frameId: 99,
+            score: 0.42,
+            previewText: "durable-note",
+            sources: [.text]
+        )
+        let strongerDurable = MemoryOrchestrator.MemorySearchHit(
+            frameId: 7,
+            score: 0.91,
+            previewText: "strong-durable",
+            sources: [.text]
+        )
+        let result = BrokerRecall.mergeSearchExecutions(
+            working: MemoryOrchestrator.SearchExecution(
+                hits: [working],
+                requestedMode: .textOnly,
+                effectiveMode: .textOnly,
+                queryEmbeddingState: .notRequested
+            ),
+            durable: MemoryOrchestrator.SearchExecution(
+                hits: [strongerDurable, durable],
+                requestedMode: .textOnly,
+                effectiveMode: .textOnly,
+                queryEmbeddingState: .notRequested
+            ),
+            topK: 3
+        )
+        #expect(result.hits.map(\.previewText) == ["strong-durable", "working-note", "durable-note"])
     }
 
     @Test

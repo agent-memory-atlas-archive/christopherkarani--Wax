@@ -635,91 +635,35 @@ extension AgentBrokerService {
     }
 
     func search(_ command: BrokerCommand.Search) async throws -> AgentBrokerValue {
-        let query = command.query
-        let mode = command.mode
-        let topK = command.topK
         let parsedFilters = command.filters
+        let mode = command.mode
         let sessionMemory = try await memory(for: parsedFilters.sessionId)
         if mode != .textOnly, parsedFilters.sessionId != nil, await longTermMemory.isQueryEmbedderReady() {
             await awaitQueryEmbedderIfNeeded(memory: sessionMemory)
         }
-        let sessionExecution = try await sessionMemory.searchExecution(
-            query: query,
-            mode: mode,
-            topK: topK,
-            frameFilter: parsedFilters.frameFilter,
-            timeRange: parsedFilters.timeRange
+        let packed = try await BrokerRecall.search(
+            command,
+            in: BrokerRecall.Environment(
+                longTermMemory: longTermMemory,
+                sessions: virtualSessions,
+                endedSessions: endedSessions,
+                preview: { Wax.dehighlightedPreviewText($0 ?? "") },
+                canonicalFrameID: { frameID, memory in
+                    await self.bestEffortCanonicalDocumentFrameID(for: frameID, memory: memory)
+                },
+                nowMs: { Self.nowMs() }
+            )
         )
-        let execution: MemoryOrchestrator.SearchExecution
-        if parsedFilters.sessionId == nil {
-            execution = sessionExecution
-        } else {
-            let scope = writeScope(for: parsedFilters.sessionId)
-            let identity = LayeredRecall.Identity(project: scope.projectName, repo: scope.repoName)
-            let durableFilter = LayeredRecall.frameFilterForScopedRetrieval(
-                base: parsedFilters.frameFilter,
-                scope: .project,
-                identity: identity
-            )
-            var durableExecution = try await longTermMemory.searchExecution(
-                query: query,
-                mode: mode,
-                topK: topK,
-                frameFilter: durableFilter,
-                timeRange: parsedFilters.timeRange
-            )
-            // `frameFilterForScopedRetrieval` no-ops on empty identity; still drop
-            // stamped foreign durable so session-scoped search matches recall.
-            durableExecution.hits = durableExecution.hits.filter {
-                Self.matchesSessionScopedRetrieval(
-                    metadata: $0.metadata,
-                    identity: identity,
-                    isWorking: false
-                )
-            }
-            execution = Self.mergeSearchExecutions(
-                working: sessionExecution,
-                durable: durableExecution,
-                topK: topK
-            )
-        }
-        let rows: [AgentBrokerValue] = execution.hits.enumerated().map { index, hit in
-            .object([
-                "rank": .from(index + 1),
-                "frameId": .from(hit.frameId),
-                "score": .double(Double(hit.score)),
-                "sources": .array(hit.sources.map { .string($0.rawValue) }),
-                "preview": .string(agentFacingPreview(hit.previewText)),
-                "metadata": .object(hit.metadata.mapValues(AgentBrokerValue.string)),
-                "explanations": .array(hit.explanations.map(AgentBrokerValue.string)),
-            ])
-        }
         if let sessionID = parsedFilters.sessionId {
             try await refreshSessionManifest(sessionID)
             try await recordRetrievalHits(
                 sessionID: sessionID,
-                query: query,
-                hits: sessionExecution.hits.map { ($0.frameId, $0.score) },
+                query: command.query,
+                hits: packed.sessionHits.map { ($0.frameId, $0.score) },
                 memory: sessionMemory
             )
         }
-        let text = rows.isEmpty ? "No results." : rows.map(\.debugJSONString).joined(separator: "\n")
-        var payload: [String: AgentBrokerValue] = [
-            "query": .string(query),
-            "topK": .from(topK),
-            "requested_mode": .string(execution.requestedMode.diagnosticsSummary),
-            "effective_mode": .string(execution.effectiveMode.diagnosticsSummary),
-            "query_embedding_state": .string(execution.queryEmbeddingState.rawValue),
-            "applied_filters": parsedFilters.summary,
-            "time_range_requested": .from(parsedFilters.timeRange != nil),
-            "time_range_applied": .from(parsedFilters.timeRange != nil),
-            "results": .array(rows),
-            "display_text": .string(text),
-        ]
-        if let warning = Self.retrievalDowngradeWarning(execution.diagnostics) {
-            payload["warning"] = .string(warning)
-        }
-        return .object(payload)
+        return packed.payload
     }
 
     func memorySearch(_ command: BrokerCommand.MemorySearch) async throws -> AgentBrokerValue {
@@ -1227,47 +1171,6 @@ extension AgentBrokerService {
         try? await Self.awaitRememberReady(memory: memory, timeout: .seconds(30))
     }
 
-    /// Session-scoped search merges the live working store with durable long-term.
-    /// Working hits win ties so a just-written session note is not buried.
-    /// Frame IDs are not comparable across stores; do not dedupe them.
-    package static func mergeSearchExecutions(
-        working: MemoryOrchestrator.SearchExecution,
-        durable: MemoryOrchestrator.SearchExecution,
-        topK: Int
-    ) -> MemoryOrchestrator.SearchExecution {
-        enum Lane: Equatable {
-            case working
-            case durable
-        }
-        var tagged: [(MemoryOrchestrator.MemorySearchHit, Lane)] = working.hits.map { ($0, .working) }
-        tagged.append(contentsOf: durable.hits.map { ($0, .durable) })
-        tagged.sort { lhs, rhs in
-            if lhs.0.score != rhs.0.score { return lhs.0.score > rhs.0.score }
-            if lhs.1 != rhs.1 { return lhs.1 == .working }
-            return lhs.0.frameId > rhs.0.frameId
-        }
-        let diagnostics: RAGContext.Diagnostics
-        switch (working.effectiveMode, durable.effectiveMode) {
-        case (.textOnly, _), (_, .textOnly):
-            diagnostics = .text(
-                requested: working.requestedMode,
-                embedding: worseQueryEmbeddingState(
-                    working.queryEmbeddingState,
-                    durable.queryEmbeddingState
-                )
-            )
-        default:
-            diagnostics = .vector(
-                requested: working.requestedMode,
-                effective: working.effectiveMode
-            )
-        }
-        return MemoryOrchestrator.SearchExecution(
-            hits: tagged.prefix(max(1, topK)).map(\.0),
-            diagnostics: diagnostics
-        )
-    }
-
     /// Compact JSON warning when hybrid was requested but some or all stores used text.
     package static func retrievalDowngradeWarning(
         _ diagnostics: RAGContext.Diagnostics
@@ -1310,24 +1213,6 @@ extension AgentBrokerService {
     private static func isHybrid(_ mode: SearchMode) -> Bool {
         if case .hybrid = mode { return true }
         return false
-    }
-
-    private static func worseQueryEmbeddingState(
-        _ lhs: RAGContext.QueryEmbeddingState,
-        _ rhs: RAGContext.QueryEmbeddingState
-    ) -> RAGContext.QueryEmbeddingState {
-        func rank(_ state: RAGContext.QueryEmbeddingState) -> Int {
-            switch state {
-            case .available: return 0
-            case .notRequested: return 1
-            case .vectorDisabled: return 2
-            case .noEmbedder: return 3
-            case .failed: return 4
-            case .circuitOpen: return 5
-            case .timeout: return 6
-            }
-        }
-        return rank(lhs) >= rank(rhs) ? lhs : rhs
     }
 
     func flush() async throws -> AgentBrokerValue {
@@ -2828,16 +2713,7 @@ extension AgentBrokerService {
         isWorking: Bool
     ) -> Bool {
         if isWorking { return true }
-        if identity.project == nil && identity.repo == nil {
-            return !hasExplicitProjectOrRepoStamp(metadata)
-        }
-        return LayeredRecall.metadataMatchesScopedRetrieval(metadata, identity: identity)
-    }
-
-    static func hasExplicitProjectOrRepoStamp(_ metadata: [String: String]) -> Bool {
-        let project = metadata[MemoryMetadataKeys.project]
-        let repo = metadata[MemoryMetadataKeys.repo]
-        return (project.map { !$0.isEmpty } ?? false) || (repo.map { !$0.isEmpty } ?? false)
+        return BrokerRecall.allowsDurableSearchHit(metadata: metadata, identity: identity)
     }
 
     static func filterCorpusHits(
